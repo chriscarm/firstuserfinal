@@ -1,0 +1,310 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+
+  --color-void: #000000;
+
+  --color-violet-950: #0a0510;
+  --color-violet-900: #2a0a4a;
+  --color-violet-800: #1a0530;
+  --color-violet-600: #7c3aed;
+  --color-violet-500: #8b5cf6;
+  --color-violet-400: #a78bfa;
+  --color-violet-300: #c4b5fd;
+
+  --color-fuchsia-600: #c026d3;
+  --color-fuchsia-500: #d946ef;
+  --color-fuchsia-400: #e879f9;
+
+  /* Updated to white-based text colors */
+  --color-text-primary: rgba(255, 255, 255, 0.9);
+  --color-text-secondary: rgba(255, 255, 255, 0.5);
+  --color-text-muted: rgba(255, 255, 255, 0.25);
+
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-pulse-slow: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-shimmer: shimmer 1.5s infinite;
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @keyframes confetti {
+    0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+  }
+  @keyframes scale-in {
+    0% { transform: scale(0.5); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  @keyframes bounce-in {
+    0% { transform: scale(0) translateY(-100px); opacity: 0; }
+    50% { transform: scale(1.2) translateY(0); }
+    70% { transform: scale(0.9); }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  @keyframes fade-in-up {
+    0% { opacity: 0; transform: translateY(20px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes bounce-right {
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(8px); }
+  }
+  --animate-bounce-right: bounce-right 0.6s ease-in-out infinite;
+  @keyframes scale-glow {
+    0% { transform: scale(0.5); opacity: 0; }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  --animate-confetti: confetti 5s ease-out forwards;
+  --animate-scale-in: scale-in 0.5s ease-out forwards;
+  --animate-bounce-in: bounce-in 0.5s ease-out forwards;
+  --animate-fade-in-up: fade-in-up 0.3s ease-out forwards;
+  --animate-scale-glow: scale-glow 0.5s ease-out forwards;
+}
+
+:root {
+  --background: 0 0% 0%; /* #000000 pure black */
+  --foreground: 0 0% 100%; /* white */
+
+  --card: 0 0% 0%; /* pure black */
+  --card-foreground: 0 0% 100%;
+
+  --popover: 0 0% 0%; /* pure black */
+  --popover-foreground: 0 0% 100%;
+
+  --primary: 263 80% 60%; /* violet-600 */
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 0 0% 8%; /* dark gray */
+  --secondary-foreground: 0 0% 100%;
+
+  --muted: 0 0% 5%; /* very dark gray */
+  --muted-foreground: 0 0% 60%;
+
+  --accent: 263 80% 60%;
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 0 0% 100% / 0.08; /* white/8% like landing page */
+  --input: 0 0% 100% / 0.1; /* white/10% */
+  --ring: 263 80% 60%;
+
+  --radius: 0.5rem;
+}
+
+@layer base {
+  body {
+    @apply bg-void text-white/90 font-sans antialiased overflow-x-hidden selection:bg-violet-500/30;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display tracking-tight;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-white/[0.02] backdrop-blur-[20px] border border-white/[0.08] shadow-lg rounded-2xl;
+  }
+
+  .glass-panel-dark {
+    @apply bg-black backdrop-blur-[20px] border-r border-white/[0.08];
+  }
+
+  .glass-input {
+    @apply bg-white/5 backdrop-blur-sm border border-white/10 text-white transition-all duration-200;
+  }
+
+  .glass-input:focus {
+    @apply bg-white/10 border-white/20 outline-none;
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-br from-amber-500 via-pink-500 to-violet-500;
+  }
+
+  .btn-gradient {
+    @apply bg-gradient-to-br from-amber-500 via-pink-500 to-violet-500 text-white shadow-lg transition-all duration-200;
+  }
+
+  .btn-gradient:hover {
+    @apply -translate-y-0.5 shadow-xl;
+  }
+
+  .btn-glass {
+    @apply bg-white/[0.02] border border-white/[0.08] text-white/50 backdrop-blur-sm transition-all duration-200;
+  }
+
+  .btn-glass:hover {
+    @apply bg-white/[0.04] border-white/[0.15] text-white/70;
+  }
+
+  .skeleton-shimmer {
+    background: linear-gradient(90deg, rgba(255,255,255,0.02) 25%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.02) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  .safe-area-pb {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .safe-area-pt {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .animate-confetti {
+    animation: confetti 5s ease-out forwards;
+  }
+
+  .animate-scale-in {
+    animation: scale-in 0.5s ease-out forwards;
+  }
+
+  .animate-bounce-in {
+    animation: bounce-in 0.5s ease-out forwards;
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 0.3s ease-out forwards;
+  }
+
+  .animate-scale-glow {
+    animation: scale-glow 0.5s ease-out forwards;
+  }
+
+  /* ==============================================
+     SUBTLE HOVER EFFECTS (Linear/Vercel/Stripe style)
+     ============================================== */
+
+  /* Subtle hover lift - like Apple/Linear */
+  .hover-lift {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .hover-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  /* Border brighten - for glass panels */
+  .hover-border-brighten {
+    transition: border-color 0.2s ease;
+  }
+  .hover-border-brighten:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  /* Subtle background shift */
+  .hover-bg-shift {
+    transition: background-color 0.2s ease;
+  }
+  .hover-bg-shift:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+  }
+
+  /* Combined card hover - lift + border brighten */
+  .hover-card {
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .hover-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255, 255, 255, 0.15);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  }
+
+  /* Icon hover - opacity change */
+  .hover-icon {
+    transition: color 0.2s ease, opacity 0.2s ease;
+  }
+  .hover-icon:hover {
+    color: rgba(255, 255, 255, 0.9);
+    opacity: 1;
+  }
+
+  /* ==============================================
+     LEGACY HOVER CLASSES (kept for compatibility, now subtle)
+     ============================================== */
+
+  /* hover-glow-subtle: now just border brighten */
+  .hover-glow-subtle {
+    transition: border-color 0.2s ease;
+  }
+  .hover-glow-subtle:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  /* hover-glow-gradient: now just subtle shadow */
+  .hover-glow-gradient {
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+  }
+  .hover-glow-gradient:hover {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    transform: translateY(-1px);
+  }
+
+  /* hover-glow-card: now lift + border brighten, no glow */
+  .hover-glow-card {
+    transition: transform 0.2s ease, border-color 0.2s ease;
+  }
+  .hover-glow-card:hover {
+    transform: translateY(-1px);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  /* hover-glow-violet: now just subtle lift */
+  .hover-glow-violet {
+    transition: transform 0.2s ease;
+  }
+  .hover-glow-violet:hover {
+    transform: translateY(-1px);
+  }
+
+  /* Laser beam animation wrapper */
+  .laser-wrapper {
+    position: relative;
+    display: inline-block;
+    border-radius: 12px;
+    background: #000;
+  }
+  .laser-wrapper::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 12px;
+    padding: 1px;
+    background: conic-gradient(from var(--laser-angle, 0deg), transparent 0%, transparent 92%, #8b5cf6 96%, transparent 100%);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: laserSpin 6s linear infinite, laserHueShift 12s linear infinite;
+  }
+}
+
+@property --laser-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes laserSpin {
+  0% { --laser-angle: 0deg; }
+  74% { --laser-angle: 180deg; }
+  100% { --laser-angle: 360deg; }
+}
+
+@keyframes laserHueShift {
+  0%, 100% { filter: hue-rotate(0deg); }
+  25% { filter: hue-rotate(60deg); }
+  50% { filter: hue-rotate(120deg); }
+  75% { filter: hue-rotate(240deg); }
+}

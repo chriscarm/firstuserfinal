@@ -1,0 +1,1070 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FirstUser Done | Product Strategy + Screens</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-0: #050505;
+      --bg-1: #0a0a0a;
+      --panel: rgba(255, 255, 255, 0.04);
+      --panel-border: rgba(255, 255, 255, 0.14);
+      --text-strong: rgba(255, 255, 255, 0.95);
+      --text-body: rgba(255, 255, 255, 0.74);
+      --text-dim: rgba(255, 255, 255, 0.5);
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --pink: #ec4899;
+      --violet: #8b5cf6;
+      --blue: #3b82f6;
+      --green: #10b981;
+      --radius-lg: 20px;
+      --radius-md: 14px;
+      --radius-sm: 10px;
+      --shadow-lg: 0 28px 72px rgba(0, 0, 0, 0.5);
+      --shadow-md: 0 14px 36px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text-body);
+      background:
+        radial-gradient(1100px 500px at 12% -14%, rgba(245, 158, 11, 0.13), transparent 62%),
+        radial-gradient(980px 520px at 92% -20%, rgba(236, 72, 153, 0.14), transparent 58%),
+        radial-gradient(920px 640px at 40% 125%, rgba(59, 130, 246, 0.1), transparent 56%),
+        linear-gradient(180deg, var(--bg-0), var(--bg-1));
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+
+    .wrap {
+      width: min(1220px, calc(100% - 32px));
+      margin: 22px auto 64px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .glass {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius-lg);
+      backdrop-filter: blur(12px);
+      box-shadow: var(--shadow-md);
+    }
+
+    .hero {
+      padding: 28px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      pointer-events: none;
+      background: radial-gradient(300px 120px at 10% 0%, rgba(245, 158, 11, 0.2), transparent 70%),
+                  radial-gradient(360px 180px at 92% 0%, rgba(139, 92, 246, 0.22), transparent 74%);
+      opacity: 0.95;
+    }
+
+    .hero-inner {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 20px;
+      align-items: end;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.78);
+      font-weight: 700;
+      margin-bottom: 12px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.04);
+      width: fit-content;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: linear-gradient(125deg, var(--amber), var(--pink));
+      box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.16);
+    }
+
+    h1, h2, h3, h4 {
+      margin: 0;
+      color: var(--text-strong);
+      letter-spacing: -0.02em;
+      font-family: "Space Grotesk", Inter, sans-serif;
+    }
+
+    h1 {
+      font-size: clamp(1.9rem, 3.6vw, 3.05rem);
+      line-height: 1.06;
+      max-width: 820px;
+    }
+
+    .sub {
+      margin-top: 10px;
+      max-width: 860px;
+      font-size: 1.02rem;
+      color: var(--text-body);
+    }
+
+    .meta {
+      display: grid;
+      gap: 8px;
+      min-width: 230px;
+      justify-items: end;
+    }
+
+    .meta .item {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.68);
+      text-align: right;
+      line-height: 1.5;
+    }
+
+    .meta strong {
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .quick-nav {
+      padding: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      position: sticky;
+      top: 12px;
+      z-index: 20;
+    }
+
+    .quick-nav a {
+      text-decoration: none;
+      color: rgba(255, 255, 255, 0.86);
+      font-size: 13px;
+      font-weight: 700;
+      padding: 9px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.02);
+      transition: 180ms ease;
+    }
+
+    .quick-nav a:hover {
+      border-color: rgba(255, 255, 255, 0.33);
+      background: rgba(255, 255, 255, 0.08);
+      transform: translateY(-1px);
+    }
+
+    .section {
+      padding: 22px;
+    }
+
+    .section-title {
+      font-size: clamp(1.2rem, 2vw, 1.6rem);
+      margin-bottom: 8px;
+    }
+
+    .section-intro {
+      margin: 0 0 18px;
+      color: var(--text-dim);
+    }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+
+    .kpi {
+      padding: 14px;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .kpi strong {
+      display: block;
+      color: #fff;
+      font-size: 1.25rem;
+      line-height: 1.2;
+      margin-bottom: 2px;
+      font-family: "Space Grotesk", Inter, sans-serif;
+    }
+
+    .kpi span { color: var(--text-dim); font-size: 13px; }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .chip {
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      padding: 6px 10px;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.88);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .chip.good { border-color: rgba(16, 185, 129, 0.55); color: #b7ffe5; }
+    .chip.warn { border-color: rgba(245, 158, 11, 0.56); color: #ffe5ba; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .card {
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.02);
+      padding: 14px;
+    }
+
+    .card h3, .card h4 {
+      margin-bottom: 6px;
+      font-size: 1.02rem;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--text-body);
+      font-size: 14px;
+    }
+
+    .card .small { color: var(--text-dim); font-size: 12px; margin-top: 8px; }
+
+    ul.clean {
+      margin: 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 6px;
+    }
+
+    ul.clean li { color: var(--text-body); }
+
+    .timeline {
+      display: grid;
+      gap: 10px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 30px 1fr;
+      gap: 12px;
+      align-items: start;
+      padding: 10px;
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .step .num {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      font-weight: 700;
+      color: #fff;
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.95), rgba(236, 72, 153, 0.95), rgba(139, 92, 246, 0.95));
+      box-shadow: 0 6px 18px rgba(236, 72, 153, 0.35);
+      font-size: 13px;
+    }
+
+    .step b { color: #fff; font-weight: 700; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    th, td {
+      text-align: left;
+      padding: 10px 11px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+      vertical-align: top;
+      font-size: 13px;
+    }
+
+    th {
+      color: #fff;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    .phase {
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
+      padding: 14px;
+      box-shadow: var(--shadow-md);
+    }
+
+    .phase h3 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 1.08rem;
+      margin-bottom: 8px;
+    }
+
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      border: 1px solid rgba(255,255,255,0.18);
+      color: rgba(255,255,255,0.9);
+      background: rgba(255,255,255,0.04);
+    }
+
+    .pill.launch { border-color: rgba(16,185,129,0.7); color: #b7ffe5; }
+    .pill.growth { border-color: rgba(245,158,11,0.7); color: #ffe5ba; }
+    .pill.scale { border-color: rgba(59,130,246,0.7); color: #cbe2ff; }
+
+    .screens-summary {
+      border-radius: var(--radius-md);
+      border: 1px dashed rgba(255, 255, 255, 0.24);
+      padding: 13px;
+      margin-bottom: 14px;
+      color: rgba(255,255,255,0.84);
+      background: rgba(255, 255, 255, 0.015);
+      font-size: 14px;
+    }
+
+    .screen-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 14px;
+    }
+
+    .screen {
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.02);
+      overflow: hidden;
+      box-shadow: var(--shadow-md);
+    }
+
+    .screen-top {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      display: grid;
+      gap: 6px;
+      background: rgba(0, 0, 0, 0.22);
+    }
+
+    .screen-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .screen h3 {
+      font-size: 0.98rem;
+      margin: 0;
+    }
+
+    .route {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+      color: rgba(255,255,255,0.78);
+      padding: 2px 7px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.03);
+      width: fit-content;
+    }
+
+    .state {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin: 0;
+    }
+
+    .screen figure {
+      margin: 0;
+      position: relative;
+      background: #000;
+    }
+
+    .screen img {
+      display: block;
+      width: 100%;
+      height: auto;
+      cursor: zoom-in;
+    }
+
+    .details {
+      margin-top: 12px;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.02);
+      overflow: hidden;
+    }
+
+    details > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 11px 14px;
+      color: #fff;
+      font-weight: 700;
+      font-size: 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.025);
+    }
+
+    details > summary::-webkit-details-marker { display: none; }
+
+    details .details-body {
+      padding: 12px 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .footer {
+      padding: 16px 20px;
+      font-size: 12px;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.92);
+      display: none;
+      place-items: center;
+      z-index: 100;
+      padding: 18px;
+    }
+
+    .lightbox.open { display: grid; }
+
+    .lightbox img {
+      max-width: min(1600px, 96vw);
+      max-height: 88vh;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.18);
+      box-shadow: var(--shadow-lg);
+      background: #000;
+    }
+
+    .lightbox .close {
+      position: fixed;
+      top: 12px;
+      right: 14px;
+      border: 1px solid rgba(255,255,255,0.3);
+      background: rgba(255,255,255,0.08);
+      color: #fff;
+      border-radius: 999px;
+      padding: 7px 10px;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    @media (max-width: 980px) {
+      .hero-inner {
+        grid-template-columns: 1fr;
+        align-items: start;
+      }
+
+      .meta { justify-items: start; }
+      .meta .item { text-align: left; }
+      .grid-3 { grid-template-columns: 1fr; }
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 640px) {
+      .wrap { width: calc(100% - 18px); margin-top: 12px; }
+      .hero, .section { padding: 16px; }
+      .quick-nav { top: 8px; }
+      .screen-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero glass" id="top">
+      <div class="hero-inner">
+        <div>
+          <div class="eyebrow"><span class="dot"></span> FirstUser Product Strategy</div>
+          <h1>FirstUser `done` PRD, launch roadmap, and full as-is screen capture in one view</h1>
+          <p class="sub">
+            This document combines the product strategy PRD, API coverage appendix, feature matrix,
+            and current route-by-route screenshots so non-technical stakeholders can review product status,
+            launch readiness, and what every screen looks like today.
+          </p>
+        </div>
+        <div class="meta">
+          <div class="item"><strong>Product:</strong> FirstUser</div>
+          <div class="item"><strong>Codebase:</strong> /Users/christophercarmichael/Desktop/done</div>
+          <div class="item"><strong>Last updated:</strong> February 6, 2026</div>
+          <div class="item"><strong>Audience:</strong> Product, founders, design, engineering</div>
+        </div>
+      </div>
+    </header>
+
+    <nav class="quick-nav glass">
+      <a href="#summary">Summary</a>
+      <a href="#scope">As-Is Scope</a>
+      <a href="#journeys">Journeys</a>
+      <a href="#modules">Requirements</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="#metrics">Metrics</a>
+      <a href="#api">API Appendix</a>
+      <a href="#matrix">Feature Matrix</a>
+      <a href="#screens">Screens</a>
+    </nav>
+
+    <section class="section glass" id="summary">
+      <h2 class="section-title">Vision And Positioning</h2>
+      <p class="section-intro">
+        FirstUser turns passive waitlists into active communities where founders drive pre-launch momentum and early users earn recognition for participation.
+      </p>
+      <div class="kpis">
+        <div class="kpi"><strong>73</strong><span>REST API endpoints documented</span></div>
+        <div class="kpi"><strong>21</strong><span>Core schema entities mapped</span></div>
+        <div class="kpi"><strong>13</strong><span>Primary routes captured in Screens section</span></div>
+        <div class="kpi"><strong>3</strong><span>Roadmap phases (Launch, Growth, Scale)</span></div>
+      </div>
+      <div class="chips">
+        <span class="chip good">Implemented: discovery + auth + creation + moderation + chat</span>
+        <span class="chip warn">Launch gaps: OTP durability, tests, observability, error reporting</span>
+        <span class="chip warn">Current screen states include auth gates and missing AppSpace seed states</span>
+      </div>
+    </section>
+
+    <section class="section glass" id="scope">
+      <h2 class="section-title">Personas And Product Scope (As-Is)</h2>
+      <div class="grid-3">
+        <article class="card">
+          <h3>Founder</h3>
+          <p>Needs a structured way to convert anonymous waitlist signups into active members, then moderate and activate the community before launch.</p>
+          <p class="small">Success: approved active members, productive conversations, lower manual moderation effort.</p>
+        </article>
+        <article class="card">
+          <h3>Early User</h3>
+          <p>Wants proof of being early, access to founders, and rewards for real participation instead of waiting silently on a list.</p>
+          <p class="small">Success: verified join, badge progression, repeat participation.</p>
+        </article>
+        <article class="card">
+          <h3>Platform Admin</h3>
+          <p>Needs a lightweight control loop to collect ideas, prioritize improvements, and keep product quality high.</p>
+          <p class="small">Success: healthy idea backlog and clear prioritization cycles.</p>
+        </article>
+      </div>
+
+      <div class="details">
+        <details open>
+          <summary>Implemented product modules</summary>
+          <div class="details-body">
+            <ul class="clean">
+              <li>Acquisition and discovery surfaces</li>
+              <li>Phone and email OTP auth, onboarding, username/profile setup</li>
+              <li>CreateSpace wizard with drafts, upload, and image crop flow</li>
+              <li>Waitlist positioning, member status lifecycle, founder moderation</li>
+              <li>Community channels, direct messages, reactions, search, unread state</li>
+              <li>Founder tools: announcements, polls, custom badges, stats</li>
+              <li>In-app notifications and admin ideas backlog</li>
+              <li>Socket-based realtime presence, typing, and message delivery</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+
+      <div class="details">
+        <details>
+          <summary>Out of scope in current implementation</summary>
+          <div class="details-body">
+            <ul class="clean">
+              <li>No dedicated in-app browser error screenshot reporting workflow</li>
+              <li>No full production observability runbook in repo</li>
+              <li>No broad automated critical-path test suite yet</li>
+              <li>No distributed OTP store or queue-backed high-scale delivery architecture</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="section glass" id="journeys">
+      <h2 class="section-title">User Journey Narratives</h2>
+      <div class="grid-2">
+        <article class="card">
+          <h3>New user to verified participant</h3>
+          <div class="timeline">
+            <div class="step"><div class="num">1</div><div><b>Discover:</b> User lands on public pages and explores AppSpaces.</div></div>
+            <div class="step"><div class="num">2</div><div><b>Verify:</b> User authenticates by phone or email OTP.</div></div>
+            <div class="step"><div class="num">3</div><div><b>Join:</b> User enters waitlist and gets position plus status context.</div></div>
+            <div class="step"><div class="num">4</div><div><b>Engage:</b> Approved users move into active community participation.</div></div>
+          </div>
+        </article>
+        <article class="card">
+          <h3>Founder setup to active moderation</h3>
+          <div class="timeline">
+            <div class="step"><div class="num">1</div><div><b>Create:</b> Founder runs CreateSpace flow and publishes.</div></div>
+            <div class="step"><div class="num">2</div><div><b>Moderate:</b> Founder approves/rejects members (single and bulk).</div></div>
+            <div class="step"><div class="num">3</div><div><b>Activate:</b> Founder publishes announcements, polls, and badge awards.</div></div>
+            <div class="step"><div class="num">4</div><div><b>Optimize:</b> Founder uses stats and feedback loops to iterate.</div></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section glass" id="modules">
+      <h2 class="section-title">Functional Requirements By Module</h2>
+      <div class="grid-3">
+        <article class="card"><h4>Discovery</h4><p>Public browsing, search/filter, and AppSpace visibility across landing and Explore.</p></article>
+        <article class="card"><h4>Auth And Identity</h4><p>Session-based auth, OTP start/verify, username checks, and persistent signed-in state.</p></article>
+        <article class="card"><h4>CreateSpace</h4><p>Guided multi-step creation with draft autosave and image processing support.</p></article>
+        <article class="card"><h4>Waitlist Lifecycle</h4><p>Position assignment, join workflow, status updates, founder moderation controls.</p></article>
+        <article class="card"><h4>Founder Activation</h4><p>Announcements, polls, badge creation/awards, and founder-facing operational stats.</p></article>
+        <article class="card"><h4>Messaging Layer</h4><p>Channel chat, DMs, reactions, unread/read tracking, and message search.</p></article>
+      </div>
+
+      <div class="details">
+        <details>
+          <summary>Roles, permissions, and access gates</summary>
+          <div class="details-body">
+            <table>
+              <thead>
+                <tr><th>Role</th><th>Access</th><th>Examples</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Unauthenticated</td><td>Public only</td><td>Explore AppSpaces, open auth flow</td></tr>
+                <tr><td>Authenticated</td><td>Baseline user actions</td><td>Profile/settings, join waitlists, message where allowed</td></tr>
+                <tr><td>Pending waitlist</td><td>Restricted participation</td><td>Can be limited from posting depending on rules</td></tr>
+                <tr><td>Approved member</td><td>Full community participation</td><td>Channel messages, DMs, reactions, polls</td></tr>
+                <tr><td>Founder</td><td>Community operations</td><td>Moderation, content publishing, settings, stats</td></tr>
+                <tr><td>Platform admin</td><td>Internal product ops</td><td>Admin ideas backlog and curation loops</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="section glass" id="roadmap">
+      <h2 class="section-title">Risks, Gaps, And Completion Roadmap</h2>
+      <p class="section-intro">Current launch blockers are known and mapped into a phased completion plan.</p>
+
+      <div class="grid-3">
+        <article class="phase">
+          <h3><span class="pill launch">Phase 1</span> Launch Readiness</h3>
+          <ul class="clean">
+            <li>Move OTP state to durable shared storage.</li>
+            <li>Clarify SMS provider strategy and remove ambiguity.</li>
+            <li>Add critical path tests (auth, moderation, messaging).</li>
+            <li>Add baseline observability and incident triage flow.</li>
+            <li>Harden permission checks and abuse protections.</li>
+          </ul>
+        </article>
+        <article class="phase">
+          <h3><span class="pill growth">Phase 2</span> Growth</h3>
+          <ul class="clean">
+            <li>Instrument funnel drop-offs and onboarding conversion points.</li>
+            <li>Improve founder activation workflows and targeting options.</li>
+            <li>Extend engagement loops with smarter notifications.</li>
+            <li>Introduce analytics views for founder decisions.</li>
+          </ul>
+        </article>
+        <article class="phase">
+          <h3><span class="pill scale">Phase 3</span> Scale Hardening</h3>
+          <ul class="clean">
+            <li>Improve realtime and messaging throughput resilience.</li>
+            <li>Add stronger operational safeguards and capacity checks.</li>
+            <li>Formalize reliability objectives and runbooks.</li>
+            <li>Reduce platform risk before larger traffic expansion.</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="grid-2" style="margin-top: 12px;">
+        <article class="card">
+          <h3>Launch readiness checklist</h3>
+          <ul class="clean">
+            <li>Security and auth hardening complete</li>
+            <li>Core UX reliability verified across key routes</li>
+            <li>Data integrity and moderation safeguards validated</li>
+            <li>Observability and error triage baseline in place</li>
+          </ul>
+        </article>
+        <article class="card" id="metrics">
+          <h3>Success metrics</h3>
+          <ul class="clean">
+            <li>North star: approved-to-active community conversion</li>
+            <li>Activation rate and verified join rate</li>
+            <li>D30 user retention</li>
+            <li>Founder management throughput</li>
+            <li>Announcement and notification engagement</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section glass" id="api">
+      <h2 class="section-title">API Appendix (Current Baseline)</h2>
+      <p class="section-intro">This section is descriptive only. No runtime API changes are introduced by this document.</p>
+
+      <table>
+        <thead>
+          <tr><th>Domain</th><th>Endpoint count</th><th>Examples</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Public discovery</td><td>6</td><td>`GET /api/stats/public`, `GET /api/appspaces/:slug/public`</td></tr>
+          <tr><td>Founder platform operations</td><td>3</td><td>`PATCH /api/founder/appspaces/:slug`, badge award</td></tr>
+          <tr><td>Auth and identity</td><td>12</td><td>register/login/logout, phone and email OTP, username setup</td></tr>
+          <tr><td>User profile and settings</td><td>6</td><td>profile update, settings update/get, badge celebration state</td></tr>
+          <tr><td>Media pipeline</td><td>1</td><td>`POST /api/upload`</td></tr>
+          <tr><td>AppSpace lifecycle and waitlist</td><td>8</td><td>create AppSpace, join waitlist, survey, moderation</td></tr>
+          <tr><td>Founder content</td><td>11</td><td>announcements, polls, badge awards, founder stats</td></tr>
+          <tr><td>Channels and messaging</td><td>13</td><td>channels, messages, DMs, unread, search</td></tr>
+          <tr><td>Reactions and notifications</td><td>6</td><td>reaction add/remove/list, notification read states</td></tr>
+          <tr><td>Drafts and admin ideas</td><td>7</td><td>draft save/retrieve/delete, admin ideas CRUD</td></tr>
+        </tbody>
+      </table>
+
+      <div class="details">
+        <details>
+          <summary>Realtime contract summary</summary>
+          <div class="details-body">
+            <div class="grid-3">
+              <article class="card">
+                <h4>Client -> Server</h4>
+                <p>Join/leave channel, typing start/stop, send message, DM join/leave/typing, DM send.</p>
+              </article>
+              <article class="card">
+                <h4>Server -> Client</h4>
+                <p>Error, online presence snapshots, typing updates, DM typing and DM message received.</p>
+              </article>
+              <article class="card">
+                <h4>Permission behavior</h4>
+                <p>Membership and approval checks enforced before realtime join/send in channel and DM contexts.</p>
+              </article>
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="section glass" id="matrix">
+      <h2 class="section-title">Feature Coverage Matrix Snapshot</h2>
+      <p class="section-intro">Each schema entity and endpoint group is mapped to active product capabilities.</p>
+
+      <table>
+        <thead>
+          <tr><th>Capability</th><th>As-is status</th><th>Readiness note</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Discovery and browsing</td><td>Implemented</td><td>Strong base, add ranking and conversion analytics</td></tr>
+          <tr><td>Dual OTP onboarding</td><td>Implemented</td><td>Durability risk due in-memory OTP state</td></tr>
+          <tr><td>CreateSpace and drafts</td><td>Implemented</td><td>Strong base, add QA guardrails</td></tr>
+          <tr><td>Founder moderation (single and bulk)</td><td>Implemented</td><td>Add moderation audit history</td></tr>
+          <tr><td>Announcements, polls, badges</td><td>Implemented</td><td>Add scheduling, templates, cohort insights</td></tr>
+          <tr><td>Channel + DM realtime messaging</td><td>Implemented</td><td>Add scale hardening and abuse controls</td></tr>
+          <tr><td>Reactions, unread, search</td><td>Implemented</td><td>Improve search relevance and indexing</td></tr>
+          <tr><td>Notifications</td><td>Implemented</td><td>Add digest and channel preference controls</td></tr>
+          <tr><td>Admin ideas backlog</td><td>Implemented</td><td>Add scoring and reporting loop</td></tr>
+          <tr><td>Error screenshot reporting</td><td>Not explicit</td><td>Roadmap gap</td></tr>
+          <tr><td>Automated critical path testing</td><td>Limited</td><td>Roadmap gap</td></tr>
+        </tbody>
+      </table>
+
+      <div class="details">
+        <details>
+          <summary>Schema glossary (21 entities)</summary>
+          <div class="details-body">
+            <div class="grid-3">
+              <article class="card"><h4>Identity</h4><p>users, userSettings</p></article>
+              <article class="card"><h4>AppSpace core</h4><p>appSpaces, appSpaceDrafts</p></article>
+              <article class="card"><h4>Waitlist and onboarding</h4><p>waitlistMembers, surveyQuestions, surveyResponses</p></article>
+              <article class="card"><h4>Founder content</h4><p>announcements, polls, pollVotes, customBadges, badgeAwards</p></article>
+              <article class="card"><h4>Messaging</h4><p>channels, chatMessages, conversations, conversationParticipants, directMessages</p></article>
+              <article class="card"><h4>Engagement and ops</h4><p>userChannelRead, notifications, messageReactions, adminIdeas</p></article>
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="section glass" id="screens">
+      <h2 class="section-title">Screens (Full Platform Walkthrough)</h2>
+      <p class="section-intro">
+        The gallery below shows a complete visual walkthrough of the platform using rich dummy data so every major product
+        surface is visible, including dashboard, Discord-like community layout, founder tools tabs, create flow, profile,
+        and settings.
+      </p>
+
+      <div class="screens-summary">
+        Capture mode in this section:
+        `Dummy Data Showcase` = full UI visibility for product walkthrough and handoff review.
+        A separate `Raw Environment` subsection is included below for literal unauthenticated/current-state captures.
+      </div>
+
+      <div class="screen-grid">
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Public Home Landing</h3><span class="route">/</span></div>
+            <p class="state">Dummy data state: full hero and landing content rendered.</p>
+          </div>
+          <figure><img src="screens/mock-full/public-home.png" alt="Public home landing with dummy data" loading="lazy" data-zoom="Public Home Landing" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Public Space Landing</h3><span class="route">/space/firstuser</span></div>
+            <p class="state">Dummy data state: full AppSpace landing, founders, rewards, and waitlist side panel.</p>
+          </div>
+          <figure><img src="screens/mock-full/public-space-landing.png" alt="Public AppSpace landing with dummy data" loading="lazy" data-zoom="Public Space Landing" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Dashboard</h3><span class="route">/dashboard</span></div>
+            <p class="state">Dummy data state: discover grid with multiple communities and nav rail context.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-dashboard.png" alt="Dashboard view with dummy data" loading="lazy" data-zoom="Dashboard (Dummy Data)" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Dashboard Notifications</h3><span class="route">/dashboard + bell popover</span></div>
+            <p class="state">Dummy data state: notification tray opened with mention, DM, and status events.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-dashboard-notifications.png" alt="Dashboard notification popover with dummy data" loading="lazy" data-zoom="Dashboard Notifications" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Explore</h3><span class="route">/explore</span></div>
+            <p class="state">Dummy data state: populated discovery cards and waitlist tiers.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-explore.png" alt="Explore page with dummy data" loading="lazy" data-zoom="Explore (Dummy Data)" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Community (Discord-Like Layout)</h3><span class="route">/space/firstuser/community</span></div>
+            <p class="state">Dummy data state: full nav rail, channels, chat pane, and member list columns.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-community-discord-view.png" alt="Community Discord-like layout with dummy data" loading="lazy" data-zoom="Community Discord Layout" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Community DM View</h3><span class="route">/space/firstuser/community (DM mode)</span></div>
+            <p class="state">Dummy data state: direct message context from the community shell.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-community-dm-view.png" alt="Community direct message view with dummy data" loading="lazy" data-zoom="Community DM View" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Founder Tools: Homepage</h3><span class="route">/founder-tools</span></div>
+            <p class="state">Dummy data state: homepage editor tab with stats and editable founder content blocks.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-founder-tools-homepage.png" alt="Founder tools homepage tab with dummy data" loading="lazy" data-zoom="Founder Tools Homepage" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Founder Tools: Announcements</h3><span class="route">/founder-tools (Announcements)</span></div>
+            <p class="state">Dummy data state: posted announcement list with pinned and standard entries.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-founder-tools-announcements.png" alt="Founder tools announcements tab with dummy data" loading="lazy" data-zoom="Founder Tools Announcements" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Founder Tools: Polls</h3><span class="route">/founder-tools (Polls)</span></div>
+            <p class="state">Dummy data state: active and ended polls with result bars and vote totals.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-founder-tools-polls.png" alt="Founder tools polls tab with dummy data" loading="lazy" data-zoom="Founder Tools Polls" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Founder Tools: Badges</h3><span class="route">/founder-tools (Badges)</span></div>
+            <p class="state">Dummy data state: custom badge cards and award actions.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-founder-tools-badges.png" alt="Founder tools badges tab with dummy data" loading="lazy" data-zoom="Founder Tools Badges" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Founder Tools: Members</h3><span class="route">/founder-tools (Members)</span></div>
+            <p class="state">Dummy data state: waitlist management with approve/reject controls.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-founder-tools-members.png" alt="Founder tools members tab with dummy data" loading="lazy" data-zoom="Founder Tools Members" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Create Flow: Template Selection</h3><span class="route">/create</span></div>
+            <p class="state">Dummy data state: template-first entry view.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-create-template.png" alt="Create template selection with dummy data" loading="lazy" data-zoom="Create Template Selection" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Create Flow: Wizard Step View</h3><span class="route">/create (wizard)</span></div>
+            <p class="state">Dummy data state: step-by-step creation form with progress indicators.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-create-wizard.png" alt="Create wizard step with dummy data" loading="lazy" data-zoom="Create Wizard Step" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Profile</h3><span class="route">/profile</span></div>
+            <p class="state">Dummy data state: user identity, badges, and waitlist memberships.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-profile.png" alt="Profile page with dummy data" loading="lazy" data-zoom="Profile (Dummy Data)" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Settings</h3><span class="route">/settings</span></div>
+            <p class="state">Dummy data state: account settings, verification, notifications, and privacy controls.</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-settings.png" alt="Settings page with dummy data" loading="lazy" data-zoom="Settings (Dummy Data)" /></figure>
+        </article>
+
+        <article class="screen">
+          <div class="screen-top">
+            <div class="screen-title-row"><h3>Style Guide</h3><span class="route">/style-guide</span></div>
+            <p class="state">Design system reference screen (current implementation).</p>
+          </div>
+          <figure><img src="screens/mock-full/mock-style-guide.png" alt="Style guide page" loading="lazy" data-zoom="Style Guide" /></figure>
+        </article>
+      </div>
+
+      <div class="details">
+        <details>
+          <summary>Raw Environment Captures (Literal As-Is Session State)</summary>
+          <div class="details-body">
+            <div class="screen-grid">
+              <article class="screen">
+                <div class="screen-top">
+                  <div class="screen-title-row"><h3>As-Is: Home</h3><span class="route">/</span></div>
+                  <p class="state">Literal current runtime state in environment.</p>
+                </div>
+                <figure><img src="screens/home.png" alt="As-is home route" loading="lazy" data-zoom="As-Is Home" /></figure>
+              </article>
+
+              <article class="screen">
+                <div class="screen-top">
+                  <div class="screen-title-row"><h3>As-Is: Explore</h3><span class="route">/explore</span></div>
+                  <p class="state">Literal current environment render.</p>
+                </div>
+                <figure><img src="screens/explore.png" alt="As-is explore route" loading="lazy" data-zoom="As-Is Explore" /></figure>
+              </article>
+
+              <article class="screen">
+                <div class="screen-top">
+                  <div class="screen-title-row"><h3>As-Is: Community Route</h3><span class="route">/space/firstuser/community</span></div>
+                  <p class="state">Literal missing-community environment state.</p>
+                </div>
+                <figure><img src="screens/space-community.png" alt="As-is community route" loading="lazy" data-zoom="As-Is Community" /></figure>
+              </article>
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <footer class="footer glass">
+      Source documents merged into this single view:
+      `/Users/christophercarmichael/Desktop/done/docs/PRD_FirstUser_Done_Product_Strategy.md`,
+      `/Users/christophercarmichael/Desktop/done/docs/PRD_FirstUser_Done_API_Appendix.md`,
+      `/Users/christophercarmichael/Desktop/done/docs/PRD_FirstUser_Done_Feature_Matrix.md`.
+    </footer>
+  </div>
+
+  <div class="lightbox" id="lightbox" aria-hidden="true">
+    <button class="close" type="button" id="lightbox-close">Close</button>
+    <img id="lightbox-image" src="" alt="Expanded screen" />
+  </div>
+
+  <script>
+    (function () {
+      const lightbox = document.getElementById("lightbox");
+      const lightboxImage = document.getElementById("lightbox-image");
+      const closeBtn = document.getElementById("lightbox-close");
+      const clickable = document.querySelectorAll("img[data-zoom]");
+
+      function closeLightbox() {
+        lightbox.classList.remove("open");
+        lightbox.setAttribute("aria-hidden", "true");
+        lightboxImage.src = "";
+        lightboxImage.alt = "Expanded screen";
+      }
+
+      clickable.forEach((img) => {
+        img.addEventListener("click", () => {
+          lightboxImage.src = img.src;
+          lightboxImage.alt = img.getAttribute("data-zoom") || "Expanded screen";
+          lightbox.classList.add("open");
+          lightbox.setAttribute("aria-hidden", "false");
+        });
+      });
+
+      closeBtn.addEventListener("click", closeLightbox);
+      lightbox.addEventListener("click", (event) => {
+        if (event.target === lightbox) closeLightbox();
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeLightbox();
+      });
+    })();
+  </script>
+</body>
+</html>
