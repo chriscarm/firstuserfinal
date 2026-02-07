@@ -1,78 +1,79 @@
 # FirstUser Launch Handoff (Replit Autoscale)
 
-## 1) What changed in this launch-ready pass
-- Fixed post-login redirect behavior for protected routes (redirect target is now authoritative).
-- Removed founder-tools hardcoding (`firstuser` / appspace ID `1`) and scoped tools by active appspace slug.
-- Added a real inbox route: `/messages` with:
-  - appspace selector
-  - conversation list
-  - DM thread pane
-- Added discover aggregation endpoint: `GET /api/appspaces/discover` (single payload for card + counts).
-- Switched `/` homepage to configurable waitlist slug:
-  - `VITE_HOMEPAGE_SPACE_SLUG` (default: `firstuser`)
-- Replaced dead-end error states with recovery CTAs (`Retry`, `Go Home`, `Explore`).
-- Wired username save in Settings via `/api/auth/username` with validation/sanitization.
-- Fixed strict TypeScript issues and notification payload typing mismatch.
+## 1) What changed in this full launch-ready pass
+- Persisted OTP verification in DB (`auth_verifications`) with lockout + throttle controls.
+- Added auth risk tracking (`auth_risk_events`) for rate-limit, invalid OTP, lockout, and identity-collision events.
+- Migrated email OTP provider to SendGrid (`server/email.ts` uses `@sendgrid/mail`).
+- Added Golden Ticket V1 domain + enforcement:
+  - public status endpoint (winner identity private)
+  - founder management endpoints (policy, tiers, winner select)
+  - policy report + admin resolution workflow
+  - immutable audit event trail
+- Added Golden Ticket UI surfaces:
+  - Founder Tools tab (`Golden Ticket`)
+  - Explore card state chip
+  - Landing page trust/status messaging
+  - Profile Golden Ticket status section
+- Completed settings persistence for all toggles and wired real account deletion.
+- Added health and readiness endpoints:
+  - `GET /api/healthz`
+  - `GET /api/readyz`
+- Added security headers, request correlation IDs, and scoped API rate limits.
 
 ## 2) Required environment variables
 - `DATABASE_URL`
 - `SESSION_SECRET`
 - `TEXTBELT_API_KEY`
-- `RESEND_API_KEY`
+- `SENDGRID_API_KEY`
+- `EMAIL_FROM`
 
 ## 3) Recommended environment variables
-- `EMAIL_FROM` (recommended for OTP sender consistency)
-- `VITE_HOMEPAGE_SPACE_SLUG` (defaults to `firstuser` if omitted)
+- `VITE_HOMEPAGE_SPACE_SLUG` (defaults to `firstuser`)
 - `FOUNDER_PHONES` (comma-separated founder bootstrap phones)
 
-## 4) Local setup
-```bash
-npm install
-npm run check
-npm run build
-```
+## 4) First deploy order (Replit)
+1. Add all required env vars in Replit Secrets.
+2. Run schema sync:
+   - `npm run db:push`
+3. Build and type gate:
+   - `npm run check`
+   - `npm run build`
+4. Deploy autoscale target.
 
-## 5) Replit deploy setup
-1. In Replit Secrets, add all required env vars from section 2.
-2. Add recommended vars from section 3 as needed.
-3. Keep deployment target as `autoscale` (already configured in `.replit`).
-4. Deploy using the project deployment button or:
-   - Build command: `npm run build`
-   - Run command: `node ./dist/index.cjs`
+## 5) Smoke tests (must-pass)
+- Auth:
+  - `/api/auth/phone/start` + `/api/auth/phone/verify`
+  - `/api/auth/email/start` + `/api/auth/email/verify`
+- Homepage and discovery:
+  - `/`
+  - `/explore`
+  - `/space/:slug`
+- Community + DM:
+  - `/space/:slug/community`
+  - `/messages`
+- Founder tools:
+  - `/space/:slug/founder-tools`
+  - Golden Ticket policy/tiers/winner flow
+- Settings:
+  - save all toggles
+  - delete account flow
+- Ops endpoints:
+  - `/api/healthz`
+  - `/api/readyz`
 
-## 6) Production smoke test checklist
-### Auth + redirect
-- Open a protected route while signed out (e.g. `/dashboard`, `/messages`, `/space/:slug/founder-tools`).
-- Complete auth and confirm you return to the exact original route.
+## 6) New API routes to verify
+- `GET /api/appspaces/:id/golden-ticket/public`
+- `GET /api/appspaces/:id/golden-ticket/founder`
+- `PUT /api/appspaces/:id/golden-ticket/policy`
+- `PUT /api/appspaces/:id/golden-ticket/tiers`
+- `POST /api/appspaces/:id/golden-ticket/select-winner`
+- `POST /api/appspaces/:id/golden-ticket/report`
+- `GET /api/appspaces/:id/golden-ticket/audit`
+- `PATCH /api/admin/policy-events/:id`
 
-### Homepage
-- Visit `/` and confirm it loads the configured homepage appspace.
-- Change `VITE_HOMEPAGE_SPACE_SLUG`, redeploy, confirm `/` switches target.
-
-### Founder tools
-- Open `/space/:slug/founder-tools` and verify all data mutations affect the selected slug only.
-- Open `/founder-tools` and verify fallback behavior:
-  - first founder-owned space if available
-  - guided empty state if none
-
-### Messages
-- Click mail icon in left rail and confirm navigation to `/messages`.
-- Select a community in selector and verify conversations + DM pane load.
-- Confirm pending-member DM restrictions and approved-member DM send behavior.
-
-### Discover pages
-- Open `/explore` and `/dashboard`.
-- Confirm both load discover data from a single aggregated request.
-
-### Build health
-- `npm run check` passes.
-- `npm run build` passes.
-
-## 7) Notes for scaling/reliability next
-- OTP store is currently in-memory (good for development, not durable across restarts).
-- Move OTP/session-critical short-lived auth data to Redis for multi-instance resiliency.
-- Add route-level monitoring for:
-  - auth completion success/failure
-  - `/messages` errors
-  - websocket connection errors
-  - 4xx/5xx on founder moderation endpoints
+## 7) Rollback notes
+- Keep previous Replit deployment version available for instant rollback.
+- If rollback is needed:
+  1. Revert deployment version.
+  2. Keep schema additions (non-destructive) but disable Golden Ticket writes.
+  3. Re-run smoke tests on reverted version.

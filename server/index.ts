@@ -6,6 +6,9 @@ import { setupWebSocket } from "./websocket";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import path from "path";
+import crypto from "crypto";
+import { sql } from "drizzle-orm";
+import { db } from "./db";
 import { autoSeedIfNeeded } from "./autoSeed";
 
 const app = express();
@@ -17,6 +20,74 @@ const httpServer = createServer(app);
 
 // Trust proxy for Replit/production environments
 app.set('trust proxy', 1);
+
+// Security headers and request correlation IDs
+app.use((req, res, next) => {
+  const correlationId = (req.headers["x-correlation-id"] as string) || crypto.randomUUID();
+  res.setHeader("x-correlation-id", correlationId);
+  res.setHeader("x-content-type-options", "nosniff");
+  res.setHeader("x-frame-options", "DENY");
+  res.setHeader("referrer-policy", "strict-origin-when-cross-origin");
+  res.setHeader("x-xss-protection", "0");
+  res.setHeader("permissions-policy", "camera=(), microphone=(), geolocation=()");
+  if (process.env.NODE_ENV === "production") {
+    res.setHeader("strict-transport-security", "max-age=31536000; includeSubDomains; preload");
+  }
+  (req as Request & { correlationId?: string }).correlationId = correlationId;
+  next();
+});
+
+const rateWindowStore = new Map<string, { count: number; resetAt: number }>();
+
+setInterval(() => {
+  const now = Date.now();
+  rateWindowStore.forEach((entry, key) => {
+    if (entry.resetAt <= now) {
+      rateWindowStore.delete(key);
+    }
+  });
+}, 60 * 1000).unref();
+
+const scopedRateLimits: Array<{
+  key: string;
+  pattern: RegExp;
+  methods: string[];
+  windowMs: number;
+  max: number;
+}> = [
+  { key: "auth", pattern: /^\/api\/auth\/(phone|email)\/(start|verify)/, methods: ["POST"], windowMs: 15 * 60 * 1000, max: 30 },
+  { key: "messaging", pattern: /^\/api\/(channels\/\d+\/messages|conversations\/\d+\/messages)/, methods: ["POST"], windowMs: 60 * 1000, max: 80 },
+  { key: "writes", pattern: /^\/api\/.+/, methods: ["POST", "PUT", "PATCH", "DELETE"], windowMs: 60 * 1000, max: 200 },
+];
+
+app.use((req, res, next) => {
+  const ip = req.ip || "unknown";
+  const now = Date.now();
+
+  for (const rule of scopedRateLimits) {
+    if (!rule.methods.includes(req.method)) continue;
+    if (!rule.pattern.test(req.path)) continue;
+
+    const key = `${rule.key}:${ip}`;
+    const current = rateWindowStore.get(key);
+
+    if (!current || now > current.resetAt) {
+      rateWindowStore.set(key, { count: 1, resetAt: now + rule.windowMs });
+      continue;
+    }
+
+    current.count += 1;
+    rateWindowStore.set(key, current);
+
+    if (current.count > rule.max) {
+      const retryAfter = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
+      res.setHeader("retry-after", String(retryAfter));
+      return res.status(429).json({ message: "Too many requests. Please try again shortly." });
+    }
+  }
+
+  next();
+});
 
 declare module "http" {
   interface IncomingMessage {
@@ -93,7 +164,8 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      const correlationId = (req as Request & { correlationId?: string }).correlationId;
+      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms${correlationId ? ` [${correlationId}]` : ""}`;
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
@@ -103,6 +175,19 @@ app.use((req, res, next) => {
   });
 
   next();
+});
+
+app.get("/api/healthz", (_req, res) => {
+  return res.json({ ok: true, service: "firstuser", timestamp: new Date().toISOString() });
+});
+
+app.get("/api/readyz", async (_req, res) => {
+  try {
+    await db.execute(sql`select 1`);
+    return res.json({ ok: true, database: "ready" });
+  } catch (error) {
+    return res.status(503).json({ ok: false, database: "unavailable" });
+  }
 });
 
 (async () => {

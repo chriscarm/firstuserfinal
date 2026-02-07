@@ -68,6 +68,16 @@ export default function Settings() {
     enabled: !!user,
   });
 
+  const { data: settingsData, refetch: refetchSettings } = useQuery({
+    queryKey: ["/api/users/me/settings"],
+    queryFn: async () => {
+      const res = await fetch("/api/users/me/settings", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch settings");
+      return res.json();
+    },
+    enabled: !!user,
+  });
+
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [title, setTitle] = useState("");
@@ -208,6 +218,17 @@ export default function Settings() {
     }
   }, [userData]);
 
+  useEffect(() => {
+    if (!settingsData) return;
+    setSmsNotifications(settingsData.smsNotifications ?? true);
+    setEmailNotifications(settingsData.emailNotifications ?? true);
+    setPollReminders(settingsData.pollReminders ?? true);
+    setDmNotifications(settingsData.dmNotifications ?? true);
+    setBadgeAlerts(settingsData.badgeAlerts ?? true);
+    setShowOnlineStatus(settingsData.showOnlineStatus ?? true);
+    setAllowDmsFromAnyone(settingsData.allowDmsFromAnyone ?? false);
+  }, [settingsData]);
+
   const normalizeUsername = (value: string) => value.trim().replace(/^@+/, "").toLowerCase();
 
   const updateProfile = useMutation({
@@ -242,7 +263,15 @@ export default function Settings() {
   });
 
   const updateSettings = useMutation({
-    mutationFn: async (settings: { emailNotifications: boolean; smsNotifications: boolean; pollReminders: boolean }) => {
+    mutationFn: async (settings: {
+      emailNotifications: boolean;
+      smsNotifications: boolean;
+      pollReminders: boolean;
+      dmNotifications: boolean;
+      badgeAlerts: boolean;
+      showOnlineStatus: boolean;
+      allowDmsFromAnyone: boolean;
+    }) => {
       const res = await fetch("/api/users/me/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -252,7 +281,10 @@ export default function Settings() {
       if (!res.ok) throw new Error("Failed to save");
       return res.json();
     },
-    onSuccess: () => toast.success("Settings saved!"),
+    onSuccess: async () => {
+      await refetchSettings();
+      toast.success("Settings saved!");
+    },
     onError: () => toast.error("Failed to save settings")
   });
 
@@ -314,9 +346,37 @@ export default function Settings() {
     updateSettings.mutate({
       emailNotifications,
       smsNotifications,
-      pollReminders
+      pollReminders,
+      dmNotifications,
+      badgeAlerts,
+      showOnlineStatus,
+      allowDmsFromAnyone,
     });
   };
+
+  const deleteAccountMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/users/me", {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.message || "Failed to delete account");
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      setDeleteDialogOpen(false);
+      await logout();
+      queryClient.clear();
+      toast.success("Your account was deleted.");
+      setLocation("/");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to delete account");
+    },
+  });
 
   return (
     <div className="relative min-h-screen bg-black overflow-hidden">
@@ -729,10 +789,11 @@ export default function Settings() {
                 </Button>
                 <Button
                   className="min-h-[44px] bg-red-500 text-white hover:bg-red-600"
-                  onClick={() => setDeleteDialogOpen(false)}
+                  onClick={() => deleteAccountMutation.mutate()}
+                  disabled={deleteAccountMutation.isPending}
                   data-testid="button-confirm-delete"
                 >
-                  Delete
+                  {deleteAccountMutation.isPending ? "Deleting..." : "Delete"}
                 </Button>
               </DialogFooter>
             </DialogContent>

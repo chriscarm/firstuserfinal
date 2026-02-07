@@ -62,6 +62,7 @@ export default function FirstUserLandingPage() {
       activeUsers={data.activeUsers}
       waitlistUsers={data.waitlistUsers}
       stats={data.stats}
+      goldenTicket={data.goldenTicket}
     />
   );
 }
