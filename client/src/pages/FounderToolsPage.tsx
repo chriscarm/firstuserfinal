@@ -7,7 +7,7 @@ import { AnnouncementsPanel } from "@/components/founder/AnnouncementsPanel";
 import { PollsPanel } from "@/components/founder/PollsPanel";
 import { BadgeAwardsPanel } from "@/components/founder/BadgeAwardsPanel";
 
-type ToolsTab = "homepage" | "announcements" | "polls" | "badges" | "members";
+type ToolsTab = "homepage" | "announcements" | "polls" | "badges" | "members" | "golden-ticket";
 
 interface Founder {
   name: string;
@@ -188,6 +188,7 @@ export default function FounderToolsPage() {
     { id: "polls", label: "Polls", icon: BarChart3 },
     { id: "badges", label: "Badges", icon: Award },
     { id: "members", label: "Members", icon: Users },
+    { id: "golden-ticket", label: "Golden Ticket", icon: Award },
   ];
 
   return (
@@ -288,6 +289,9 @@ export default function FounderToolsPage() {
         )}
         {activeTab === "members" && (
           <MembersManager appSpaceId={activeAppSpace.id} />
+        )}
+        {activeTab === "golden-ticket" && (
+          <GoldenTicketManager appSpaceId={activeAppSpace.id} />
         )}
       </div>
     </div>
@@ -707,6 +711,396 @@ function MembersManager({ appSpaceId }: { appSpaceId: number }) {
           </div>
         ))}
         {members.length === 0 && <div className="p-8 text-center text-white/40">No members yet</div>}
+      </div>
+    </div>
+  );
+}
+
+interface GoldenTicketFounderResponse {
+  ticket: {
+    id: number;
+    status: "open" | "selected" | "closed";
+    winnerUserId: string | null;
+    selectedAt: string | null;
+    serviceContingent: boolean;
+    nonTransferable: boolean;
+    rateLimitedByPolicy: boolean;
+    winnerVisibility: "status_only";
+  };
+  tiers: Array<{
+    id: number;
+    rank: number;
+    label: string;
+    reward: string;
+    isLifetime: boolean;
+    benefits: string[];
+  }>;
+  winner: null | {
+    id: string;
+    username: string | null;
+    displayName: string | null;
+    email: string | null;
+    phone: string | null;
+  };
+  audits: Array<{
+    id: number;
+    eventType: string;
+    eventData: string | null;
+    createdAt: string;
+  }>;
+  policyEvents: Array<{
+    id: number;
+    category: string;
+    description: string;
+    status: string;
+    resolution: string | null;
+    createdAt: string;
+  }>;
+}
+
+function GoldenTicketManager({ appSpaceId }: { appSpaceId: number }) {
+  const queryClient = useQueryClient();
+  const [winnerUserId, setWinnerUserId] = useState("");
+  const [winnerReason, setWinnerReason] = useState("");
+  const [tierDrafts, setTierDrafts] = useState<Array<{ rank: number; label: string; reward: string; isLifetime: boolean; benefits: string }>>([]);
+  const [serviceContingent, setServiceContingent] = useState(true);
+  const [nonTransferable, setNonTransferable] = useState(true);
+  const [rateLimitedByPolicy, setRateLimitedByPolicy] = useState(true);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery<GoldenTicketFounderResponse>({
+    queryKey: ["golden-ticket-founder", appSpaceId],
+    queryFn: async () => {
+      const res = await fetch(`/api/appspaces/${appSpaceId}/golden-ticket/founder`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load Golden Ticket settings");
+      return res.json();
+    },
+  });
+
+  useEffect(() => {
+    if (!data) return;
+    setServiceContingent(data.ticket.serviceContingent);
+    setNonTransferable(data.ticket.nonTransferable);
+    setRateLimitedByPolicy(data.ticket.rateLimitedByPolicy);
+    setTierDrafts(
+      data.tiers
+        .sort((a, b) => a.rank - b.rank)
+        .map((tier) => ({
+          rank: tier.rank,
+          label: tier.label,
+          reward: tier.reward,
+          isLifetime: tier.isLifetime,
+          benefits: (tier.benefits || [tier.reward]).join("\n"),
+        }))
+    );
+  }, [data]);
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["golden-ticket-founder", appSpaceId] });
+    queryClient.invalidateQueries({ queryKey: ["appspace", appSpaceId, "public"] });
+    queryClient.invalidateQueries({ queryKey: ["appspaces-discover"] });
+  };
+
+  const savePolicyMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/appspaces/${appSpaceId}/golden-ticket/policy`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          serviceContingent,
+          nonTransferable,
+          rateLimitedByPolicy,
+          winnerVisibility: "status_only",
+        }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.message || "Failed to save policy");
+      }
+      return res.json();
+    },
+    onSuccess: refresh,
+  });
+
+  const saveTiersMutation = useMutation({
+    mutationFn: async () => {
+      const payload = tierDrafts.map((tier) => ({
+        rank: tier.rank,
+        label: tier.label,
+        reward: tier.reward,
+        isLifetime: tier.isLifetime,
+        benefits: tier.benefits
+          .split("\n")
+          .map((benefit) => benefit.trim())
+          .filter(Boolean),
+      }));
+
+      const res = await fetch(`/api/appspaces/${appSpaceId}/golden-ticket/tiers`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ tiers: payload }),
+      });
+
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.message || "Failed to save tiers");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      setLocalError(null);
+      refresh();
+    },
+    onError: (error: Error) => {
+      setLocalError(error.message);
+    },
+  });
+
+  const selectWinnerMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/appspaces/${appSpaceId}/golden-ticket/select-winner`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          winnerUserId,
+          reason: winnerReason || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.message || "Failed to select winner");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      setWinnerReason("");
+      setWinnerUserId("");
+      refresh();
+    },
+    onError: (error: Error) => {
+      setLocalError(error.message);
+    },
+  });
+
+  if (isLoading || !data) {
+    return (
+      <div className="glass-panel p-10 flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-violet-400" />
+      </div>
+    );
+  }
+
+  const addTier = () => {
+    const nextRank = (tierDrafts[tierDrafts.length - 1]?.rank || 0) + 1;
+    setTierDrafts((prev) => [
+      ...prev,
+      { rank: nextRank, label: `Tier ${nextRank}`, reward: "", isLifetime: false, benefits: "" },
+    ]);
+  };
+
+  const updateTier = (index: number, patch: Partial<{ rank: number; label: string; reward: string; isLifetime: boolean; benefits: string }>) => {
+    setTierDrafts((prev) => prev.map((tier, tierIndex) => (tierIndex === index ? { ...tier, ...patch } : tier)));
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="glass-panel p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <h3 className="text-lg font-bold text-white">Golden Ticket Policy</h3>
+            <p className="text-sm text-white/60">Exactly one mandatory lifetime winner per community.</p>
+          </div>
+          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${data.ticket.status === "open" ? "bg-emerald-500/20 text-emerald-300" : "bg-violet-500/20 text-violet-300"}`}>
+            {data.ticket.status === "open" ? "Open" : "Selected"}
+          </span>
+        </div>
+
+        <div className="grid sm:grid-cols-3 gap-4">
+          <label className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm text-white/80 flex items-center justify-between">
+            Service contingent
+            <input type="checkbox" checked={serviceContingent} onChange={(event) => setServiceContingent(event.target.checked)} />
+          </label>
+          <label className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm text-white/80 flex items-center justify-between">
+            Non-transferable
+            <input type="checkbox" checked={nonTransferable} onChange={(event) => setNonTransferable(event.target.checked)} />
+          </label>
+          <label className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm text-white/80 flex items-center justify-between">
+            Rate-limited by policy
+            <input type="checkbox" checked={rateLimitedByPolicy} onChange={(event) => setRateLimitedByPolicy(event.target.checked)} />
+          </label>
+        </div>
+
+        <div className="mt-4">
+          <button
+            onClick={() => savePolicyMutation.mutate()}
+            disabled={savePolicyMutation.isPending}
+            className="px-4 py-2 rounded-lg bg-violet-500/20 text-violet-300 hover:bg-violet-500/30 disabled:opacity-60"
+          >
+            {savePolicyMutation.isPending ? "Saving..." : "Save Policy"}
+          </button>
+        </div>
+      </div>
+
+      <div className="glass-panel p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-white">Ticket Tiers</h3>
+          <button onClick={addTier} className="px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-sm">Add Tier</button>
+        </div>
+
+        <div className="space-y-3">
+          {tierDrafts.map((tier, index) => (
+            <div key={index} className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+              <div className="grid md:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs text-white/40 mb-1">Rank</label>
+                  <input
+                    type="number"
+                    value={tier.rank}
+                    min={1}
+                    className="w-full rounded-lg bg-black/40 border border-white/10 px-3 py-2 text-sm text-white"
+                    onChange={(event) => updateTier(index, { rank: Number(event.target.value || 1) })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-white/40 mb-1">Label</label>
+                  <input
+                    type="text"
+                    value={tier.label}
+                    className="w-full rounded-lg bg-black/40 border border-white/10 px-3 py-2 text-sm text-white"
+                    onChange={(event) => updateTier(index, { label: event.target.value })}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs text-white/40 mb-1">Reward</label>
+                  <input
+                    type="text"
+                    value={tier.reward}
+                    className="w-full rounded-lg bg-black/40 border border-white/10 px-3 py-2 text-sm text-white"
+                    onChange={(event) => updateTier(index, { reward: event.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-3">
+                <label className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/80 flex items-center justify-between">
+                  Lifetime
+                  <input
+                    type="checkbox"
+                    checked={tier.isLifetime}
+                    onChange={(event) => updateTier(index, { isLifetime: event.target.checked })}
+                  />
+                </label>
+                <div>
+                  <label className="block text-xs text-white/40 mb-1">Benefits (one per line)</label>
+                  <textarea
+                    value={tier.benefits}
+                    rows={3}
+                    className="w-full rounded-lg bg-black/40 border border-white/10 px-3 py-2 text-sm text-white"
+                    onChange={(event) => updateTier(index, { benefits: event.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {localError && (
+          <p className="mt-3 text-sm text-red-300">{localError}</p>
+        )}
+
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            onClick={() => saveTiersMutation.mutate()}
+            disabled={saveTiersMutation.isPending}
+            className="px-4 py-2 rounded-lg bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white disabled:opacity-60"
+          >
+            {saveTiersMutation.isPending ? "Saving..." : "Save Tiers"}
+          </button>
+          <span className="text-xs text-white/50">Tier 1 must remain lifetime. Existing benefits cannot be removed after publish.</span>
+        </div>
+      </div>
+
+      <div className="glass-panel p-5 space-y-4">
+        <h3 className="text-lg font-bold text-white">Select Winner (One-time)</h3>
+        {data.ticket.status === "selected" ? (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">
+            Winner selected on {data.ticket.selectedAt ? new Date(data.ticket.selectedAt).toLocaleString() : "-"}. Identity is private on public pages.
+          </div>
+        ) : (
+          <>
+            <div className="grid md:grid-cols-2 gap-3">
+              <input
+                type="text"
+                placeholder="Winner user ID"
+                value={winnerUserId}
+                onChange={(event) => setWinnerUserId(event.target.value)}
+                className="rounded-lg bg-black/40 border border-white/10 px-3 py-2 text-sm text-white"
+              />
+              <input
+                type="text"
+                placeholder="Optional reason"
+                value={winnerReason}
+                onChange={(event) => setWinnerReason(event.target.value)}
+                className="rounded-lg bg-black/40 border border-white/10 px-3 py-2 text-sm text-white"
+              />
+            </div>
+            <button
+              onClick={() => {
+                if (!winnerUserId.trim()) {
+                  setLocalError("Winner user ID is required");
+                  return;
+                }
+                const confirmed = window.confirm("Selecting a Golden Ticket winner is irreversible. Continue?");
+                if (confirmed) {
+                  setLocalError(null);
+                  selectWinnerMutation.mutate();
+                }
+              }}
+              disabled={selectWinnerMutation.isPending}
+              className="px-4 py-2 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 disabled:opacity-60"
+            >
+              {selectWinnerMutation.isPending ? "Selecting..." : "Confirm Winner"}
+            </button>
+          </>
+        )}
+      </div>
+
+      <div className="glass-panel p-5">
+        <h3 className="text-lg font-bold text-white mb-3">Audit Timeline</h3>
+        <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+          {data.audits.length === 0 ? (
+            <p className="text-sm text-white/50">No audit events yet.</p>
+          ) : (
+            data.audits.map((event) => (
+              <div key={event.id} className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+                <p className="text-sm text-white/85">{event.eventType.replace(/_/g, " ")}</p>
+                <p className="text-xs text-white/45">{new Date(event.createdAt).toLocaleString()}</p>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="glass-panel p-5">
+        <h3 className="text-lg font-bold text-white mb-3">Policy Reports</h3>
+        <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+          {data.policyEvents.length === 0 ? (
+            <p className="text-sm text-white/50">No policy reports.</p>
+          ) : (
+            data.policyEvents.map((event) => (
+              <div key={event.id} className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm text-white/85">{event.category.replace(/_/g, " ")}</p>
+                  <span className="text-xs text-white/50">{event.status}</span>
+                </div>
+                <p className="text-xs text-white/60 mt-1">{event.description}</p>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

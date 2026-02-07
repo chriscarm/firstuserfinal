@@ -34,6 +34,13 @@ interface OnlineUser {
 
 const onlineUsers: Map<number, Map<string, OnlineUser>> = new Map(); // appSpaceId -> Map<userId, user>
 
+let ioInstance: Server | null = null;
+
+export function emitNotificationToUser(userId: string, notification: unknown) {
+  if (!ioInstance) return;
+  ioInstance.to(`user:${userId}`).emit("new-notification", notification);
+}
+
 // Clean up stale typing indicators (older than 3 seconds)
 setInterval(() => {
   const now = Date.now();
@@ -70,6 +77,8 @@ export function setupWebSocket(httpServer: HttpServer, sessionMiddleware: any): 
     path: "/socket.io",
   });
 
+  ioInstance = io;
+
   // Use session middleware for Socket.IO
   io.use((socket, next) => {
     sessionMiddleware(socket.request, {} as any, next);
@@ -94,6 +103,8 @@ export function setupWebSocket(httpServer: HttpServer, sessionMiddleware: any): 
 
     // Store user info on socket
     (socket as any).userId = userId;
+    socket.join(`user:${userId}`);
+
     (socket as any).user = {
       id: user.id,
       username: user.username,
@@ -465,6 +476,21 @@ export function setupWebSocket(httpServer: HttpServer, sessionMiddleware: any): 
         // Broadcast to all in conversation
         const roomName = `dm:${conversationId}`;
         io.to(roomName).emit("dm:message-received", messageWithUser);
+
+        const participants = await storage.getConversationParticipants(conversationId);
+        const recipientIds = participants.map((p) => p.id).filter((id) => id !== userId);
+        await Promise.all(recipientIds.map(async (recipientId) => {
+          const notification = await storage.createNotification({
+            userId: recipientId,
+            type: "dm",
+            data: JSON.stringify({
+              senderName: user.displayName || user.username || "Someone",
+              conversationId,
+              appSpaceId: conversation.appSpaceId,
+            }),
+          });
+          emitNotificationToUser(recipientId, notification);
+        }));
 
         // Clear typing indicator
         const convTyping = dmTypingUsers.get(conversationId);

@@ -1,6 +1,88 @@
 import { db } from "./db";
-import { users, appSpaces, waitlistMembers, surveyQuestions, surveyResponses, announcements, polls, pollVotes, customBadges, badgeAwards, userSettings, channels, chatMessages, conversations, conversationParticipants, directMessages, userChannelRead, notifications, messageReactions, appSpaceDrafts, adminIdeas, type User, type InsertUser, type AppSpace, type InsertAppSpace, type WaitlistMember, type InsertWaitlistMember, type SurveyQuestion, type InsertSurveyQuestion, type SurveyResponse, type InsertSurveyResponse, type Announcement, type InsertAnnouncement, type Poll, type InsertPoll, type PollVote, type InsertPollVote, type CustomBadge, type InsertCustomBadge, type BadgeAward, type InsertBadgeAward, type UserSettings, type InsertUserSettings, type Channel, type InsertChannel, type ChatMessage, type InsertChatMessage, type Conversation, type InsertConversation, type ConversationParticipant, type InsertConversationParticipant, type DirectMessage, type InsertDirectMessage, type UserChannelRead, type InsertUserChannelRead, type Notification, type InsertNotification, type MessageReaction, type InsertMessageReaction, type AppSpaceDraft, type InsertAppSpaceDraft, type AdminIdea, type InsertAdminIdea } from "@shared/schema";
-import { eq, sql, desc, and, asc, count, gt, lt, inArray, gte } from "drizzle-orm";
+import {
+  users,
+  appSpaces,
+  waitlistMembers,
+  surveyQuestions,
+  surveyResponses,
+  announcements,
+  polls,
+  pollVotes,
+  customBadges,
+  badgeAwards,
+  userSettings,
+  channels,
+  chatMessages,
+  conversations,
+  conversationParticipants,
+  directMessages,
+  userChannelRead,
+  notifications,
+  messageReactions,
+  appSpaceDrafts,
+  adminIdeas,
+  authVerifications,
+  authRiskEvents,
+  goldenTickets,
+  ticketTiers,
+  ticketAuditEvents,
+  ticketPolicyEvents,
+  type User,
+  type InsertUser,
+  type AppSpace,
+  type InsertAppSpace,
+  type WaitlistMember,
+  type InsertWaitlistMember,
+  type SurveyQuestion,
+  type InsertSurveyQuestion,
+  type SurveyResponse,
+  type InsertSurveyResponse,
+  type Announcement,
+  type InsertAnnouncement,
+  type Poll,
+  type InsertPoll,
+  type PollVote,
+  type InsertPollVote,
+  type CustomBadge,
+  type InsertCustomBadge,
+  type BadgeAward,
+  type InsertBadgeAward,
+  type UserSettings,
+  type InsertUserSettings,
+  type Channel,
+  type InsertChannel,
+  type ChatMessage,
+  type InsertChatMessage,
+  type Conversation,
+  type InsertConversation,
+  type ConversationParticipant,
+  type InsertConversationParticipant,
+  type DirectMessage,
+  type InsertDirectMessage,
+  type UserChannelRead,
+  type InsertUserChannelRead,
+  type Notification,
+  type InsertNotification,
+  type MessageReaction,
+  type InsertMessageReaction,
+  type AppSpaceDraft,
+  type InsertAppSpaceDraft,
+  type AdminIdea,
+  type InsertAdminIdea,
+  type AuthVerification,
+  type InsertAuthVerification,
+  type AuthRiskEvent,
+  type InsertAuthRiskEvent,
+  type GoldenTicket,
+  type InsertGoldenTicket,
+  type TicketTier,
+  type InsertTicketTier,
+  type TicketAuditEvent,
+  type InsertTicketAuditEvent,
+  type TicketPolicyEvent,
+  type InsertTicketPolicyEvent,
+} from "@shared/schema";
+import { eq, sql, desc, and, asc, count, gt, lt, inArray, gte, or } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -57,6 +139,18 @@ export class DbStorage implements IStorage {
     const normalizedPhone = phone.replace(/\D/g, "");
     const result = await db.select().from(users).where(eq(users.phone, normalizedPhone)).limit(1);
     return result[0];
+  }
+
+  async countUsersByPhone(phone: string): Promise<number> {
+    const normalizedPhone = phone.replace(/\D/g, "");
+    const result = await db.select({ count: count() }).from(users).where(eq(users.phone, normalizedPhone));
+    return result[0]?.count ?? 0;
+  }
+
+  async countUsersByEmail(email: string): Promise<number> {
+    const normalizedEmail = email.toLowerCase().trim();
+    const result = await db.select({ count: count() }).from(users).where(eq(users.email, normalizedEmail));
+    return result[0]?.count ?? 0;
   }
 
   async createUser(insertUser: { email: string; password: string }): Promise<User> {
@@ -512,7 +606,15 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
-  async saveUserSettings(userId: string, settings: { emailNotifications?: boolean; smsNotifications?: boolean; pollReminders?: boolean }): Promise<UserSettings> {
+  async saveUserSettings(userId: string, settings: {
+    emailNotifications?: boolean;
+    smsNotifications?: boolean;
+    pollReminders?: boolean;
+    dmNotifications?: boolean;
+    badgeAlerts?: boolean;
+    showOnlineStatus?: boolean;
+    allowDmsFromAnyone?: boolean;
+  }): Promise<UserSettings> {
     const existing = await this.getUserSettings(userId);
     if (existing) {
       const result = await db.update(userSettings)
@@ -527,6 +629,10 @@ export class DbStorage implements IStorage {
           emailNotifications: settings.emailNotifications ?? true,
           smsNotifications: settings.smsNotifications ?? true,
           pollReminders: settings.pollReminders ?? true,
+          dmNotifications: settings.dmNotifications ?? true,
+          badgeAlerts: settings.badgeAlerts ?? true,
+          showOnlineStatus: settings.showOnlineStatus ?? true,
+          allowDmsFromAnyone: settings.allowDmsFromAnyone ?? false,
         })
         .returning();
       return result[0];
@@ -1096,6 +1202,334 @@ export class DbStorage implements IStorage {
       channelName: channelNameMap[msg.channelId] || "unknown",
     }));
   }
+  // ============ AUTH VERIFICATION & RISK METHODS ============
+
+  async createAuthVerification(input: {
+    userId: string;
+    method: "phone" | "email";
+    target: string;
+    codeHash: string;
+    ipAddress?: string | null;
+    expiresAt: Date;
+    maxAttempts?: number;
+  }): Promise<AuthVerification> {
+    await db.update(authVerifications)
+      .set({ consumedAt: new Date(), updatedAt: new Date() })
+      .where(and(
+        eq(authVerifications.userId, input.userId),
+        eq(authVerifications.method, input.method),
+        eq(authVerifications.target, input.target),
+        sql`${authVerifications.consumedAt} IS NULL`
+      ));
+
+    const result = await db.insert(authVerifications).values({
+      userId: input.userId,
+      method: input.method,
+      target: input.target,
+      codeHash: input.codeHash,
+      ipAddress: input.ipAddress ?? null,
+      expiresAt: input.expiresAt,
+      maxAttempts: input.maxAttempts ?? 5,
+    }).returning();
+    return result[0];
+  }
+
+  async getActiveAuthVerification(userId: string, method: "phone" | "email"): Promise<AuthVerification | undefined> {
+    const result = await db.select().from(authVerifications)
+      .where(and(
+        eq(authVerifications.userId, userId),
+        eq(authVerifications.method, method),
+        sql`${authVerifications.consumedAt} IS NULL`
+      ))
+      .orderBy(desc(authVerifications.createdAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async incrementAuthVerificationAttempt(id: number, lockUntil?: Date): Promise<AuthVerification | undefined> {
+    const current = await db.select().from(authVerifications).where(eq(authVerifications.id, id)).limit(1);
+    if (!current[0]) return undefined;
+
+    const nextAttempts = (current[0].attempts ?? 0) + 1;
+    const result = await db.update(authVerifications)
+      .set({
+        attempts: nextAttempts,
+        lockedUntil: lockUntil ?? current[0].lockedUntil ?? null,
+        updatedAt: new Date(),
+      })
+      .where(eq(authVerifications.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async consumeAuthVerification(id: number): Promise<void> {
+    await db.update(authVerifications)
+      .set({ consumedAt: new Date(), updatedAt: new Date() })
+      .where(eq(authVerifications.id, id));
+  }
+
+  async countRecentAuthVerificationsByIp(ipAddress: string, minutes: number): Promise<number> {
+    const since = new Date(Date.now() - minutes * 60 * 1000);
+    const result = await db.select({ count: count() })
+      .from(authVerifications)
+      .where(and(
+        eq(authVerifications.ipAddress, ipAddress),
+        gte(authVerifications.createdAt, since)
+      ));
+    return result[0]?.count ?? 0;
+  }
+
+  async countRecentAuthVerificationsByTarget(target: string, minutes: number): Promise<number> {
+    const since = new Date(Date.now() - minutes * 60 * 1000);
+    const result = await db.select({ count: count() })
+      .from(authVerifications)
+      .where(and(
+        eq(authVerifications.target, target),
+        gte(authVerifications.createdAt, since)
+      ));
+    return result[0]?.count ?? 0;
+  }
+
+  async createAuthRiskEvent(input: {
+    userId?: string | null;
+    method: "phone" | "email";
+    target?: string | null;
+    eventType: string;
+    severity?: "low" | "medium" | "high" | "critical";
+    ipAddress?: string | null;
+    metadata?: string | null;
+  }): Promise<AuthRiskEvent> {
+    const result = await db.insert(authRiskEvents).values({
+      userId: input.userId ?? null,
+      method: input.method,
+      target: input.target ?? null,
+      eventType: input.eventType,
+      severity: input.severity ?? "medium",
+      ipAddress: input.ipAddress ?? null,
+      metadata: input.metadata ?? null,
+    }).returning();
+    return result[0];
+  }
+
+  // ============ GOLDEN TICKET METHODS ============
+
+  async getOrCreateGoldenTicket(appSpaceId: number): Promise<GoldenTicket> {
+    const existing = await db.select().from(goldenTickets)
+      .where(eq(goldenTickets.appSpaceId, appSpaceId))
+      .limit(1);
+
+    if (existing[0]) {
+      return existing[0];
+    }
+
+    const created = await db.insert(goldenTickets).values({
+      appSpaceId,
+      status: "open",
+      serviceContingent: true,
+      nonTransferable: true,
+      rateLimitedByPolicy: true,
+      winnerVisibility: "status_only",
+    }).returning();
+
+    const defaultTiers = [
+      { rank: 1, label: "1st", reward: "Max tier access free for life", isLifetime: true },
+      { rank: 2, label: "10^1", reward: "1 year free access", isLifetime: false },
+      { rank: 3, label: "10^2", reward: "6 months free access", isLifetime: false },
+    ];
+
+    await db.insert(ticketTiers).values(defaultTiers.map((tier) => ({
+      goldenTicketId: created[0].id,
+      rank: tier.rank,
+      label: tier.label,
+      reward: tier.reward,
+      isLifetime: tier.isLifetime,
+      benefits: JSON.stringify([tier.reward]),
+    })));
+
+    return created[0];
+  }
+
+  async getGoldenTicketByAppSpaceId(appSpaceId: number): Promise<GoldenTicket | undefined> {
+    const result = await db.select().from(goldenTickets)
+      .where(eq(goldenTickets.appSpaceId, appSpaceId))
+      .limit(1);
+    return result[0];
+  }
+
+  async getTicketTiers(goldenTicketId: number): Promise<TicketTier[]> {
+    return db.select().from(ticketTiers)
+      .where(eq(ticketTiers.goldenTicketId, goldenTicketId))
+      .orderBy(asc(ticketTiers.rank));
+  }
+
+  async replaceTicketTiers(goldenTicketId: number, tiers: Array<{ rank: number; label: string; reward: string; isLifetime: boolean; benefits?: string[] }>): Promise<TicketTier[]> {
+    await db.delete(ticketTiers).where(eq(ticketTiers.goldenTicketId, goldenTicketId));
+    if (tiers.length === 0) return [];
+
+    const inserted = await db.insert(ticketTiers).values(
+      tiers.map((tier) => ({
+        goldenTicketId,
+        rank: tier.rank,
+        label: tier.label,
+        reward: tier.reward,
+        isLifetime: tier.isLifetime,
+        benefits: JSON.stringify(tier.benefits ?? [tier.reward]),
+      }))
+    ).returning();
+
+    return inserted.sort((a, b) => a.rank - b.rank);
+  }
+
+  async updateGoldenTicketPolicy(appSpaceId: number, updates: Partial<Pick<GoldenTicket, "serviceContingent" | "nonTransferable" | "rateLimitedByPolicy" | "winnerVisibility">>): Promise<GoldenTicket> {
+    const existing = await this.getOrCreateGoldenTicket(appSpaceId);
+    const result = await db.update(goldenTickets)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(goldenTickets.id, existing.id))
+      .returning();
+    return result[0];
+  }
+
+  async selectGoldenTicketWinner(appSpaceId: number, winnerUserId: string, selectedByUserId: string, reason?: string): Promise<GoldenTicket> {
+    const existing = await this.getOrCreateGoldenTicket(appSpaceId);
+    const result = await db.update(goldenTickets)
+      .set({
+        status: "selected",
+        winnerUserId,
+        selectedByUserId,
+        selectedAt: new Date(),
+        selectionReason: reason ?? null,
+        updatedAt: new Date(),
+      })
+      .where(eq(goldenTickets.id, existing.id))
+      .returning();
+    return result[0];
+  }
+
+  async createTicketAuditEvent(input: {
+    appSpaceId: number;
+    goldenTicketId: number;
+    actorUserId?: string | null;
+    eventType: string;
+    eventData?: string | null;
+  }): Promise<TicketAuditEvent> {
+    const result = await db.insert(ticketAuditEvents).values({
+      appSpaceId: input.appSpaceId,
+      goldenTicketId: input.goldenTicketId,
+      actorUserId: input.actorUserId ?? null,
+      eventType: input.eventType,
+      eventData: input.eventData ?? null,
+    }).returning();
+    return result[0];
+  }
+
+  async getTicketAuditEvents(appSpaceId: number): Promise<TicketAuditEvent[]> {
+    return db.select().from(ticketAuditEvents)
+      .where(eq(ticketAuditEvents.appSpaceId, appSpaceId))
+      .orderBy(desc(ticketAuditEvents.createdAt));
+  }
+
+  async createTicketPolicyEvent(input: InsertTicketPolicyEvent): Promise<TicketPolicyEvent> {
+    const result = await db.insert(ticketPolicyEvents).values(input).returning();
+    return result[0];
+  }
+
+  async getTicketPolicyEvents(appSpaceId: number): Promise<TicketPolicyEvent[]> {
+    return db.select().from(ticketPolicyEvents)
+      .where(eq(ticketPolicyEvents.appSpaceId, appSpaceId))
+      .orderBy(desc(ticketPolicyEvents.createdAt));
+  }
+
+  async getTicketPolicyEventById(id: number): Promise<TicketPolicyEvent | undefined> {
+    const result = await db.select().from(ticketPolicyEvents)
+      .where(eq(ticketPolicyEvents.id, id))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateTicketPolicyEvent(id: number, updates: Partial<Pick<TicketPolicyEvent, "status" | "resolution" | "resolvedByUserId" | "resolvedAt">>): Promise<TicketPolicyEvent> {
+    const result = await db.update(ticketPolicyEvents)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(ticketPolicyEvents.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getGoldenTicketPublicSummary(appSpaceId: number, currentUserId?: string): Promise<{
+    status: "open" | "selected" | "closed";
+    selected: boolean;
+    selectedAt: Date | null;
+    isWinner: boolean;
+    serviceContingent: boolean;
+  }> {
+    const ticket = await this.getOrCreateGoldenTicket(appSpaceId);
+    return {
+      status: (ticket.status as "open" | "selected" | "closed") ?? "open",
+      selected: ticket.status === "selected",
+      selectedAt: ticket.selectedAt ?? null,
+      isWinner: !!currentUserId && ticket.winnerUserId === currentUserId,
+      serviceContingent: !!ticket.serviceContingent,
+    };
+  }
+
+  // ============ ACCOUNT DELETION ============
+
+  async deleteUserAccount(userId: string): Promise<void> {
+    const ownedAppSpaces = await db.select({ id: appSpaces.id })
+      .from(appSpaces)
+      .where(eq(appSpaces.founderId, userId));
+
+    // Delete owned app spaces and dependent entities in safe order.
+    for (const space of ownedAppSpaces) {
+      await db.execute(sql`DELETE FROM ticket_audit_events WHERE app_space_id = ${space.id}`);
+      await db.execute(sql`DELETE FROM ticket_policy_events WHERE app_space_id = ${space.id}`);
+      await db.execute(sql`DELETE FROM ticket_tiers WHERE golden_ticket_id IN (SELECT id FROM golden_tickets WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM golden_tickets WHERE app_space_id = ${space.id}`);
+
+      await db.execute(sql`DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM chat_messages WHERE channel_id IN (SELECT id FROM channels WHERE app_space_id = ${space.id}))`);
+      await db.execute(sql`DELETE FROM user_channel_read WHERE channel_id IN (SELECT id FROM channels WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM chat_messages WHERE channel_id IN (SELECT id FROM channels WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM channels WHERE app_space_id = ${space.id}`);
+
+      await db.execute(sql`DELETE FROM direct_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM conversation_participants WHERE conversation_id IN (SELECT id FROM conversations WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM conversations WHERE app_space_id = ${space.id}`);
+
+      await db.execute(sql`DELETE FROM poll_votes WHERE poll_id IN (SELECT id FROM polls WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM polls WHERE app_space_id = ${space.id}`);
+      await db.execute(sql`DELETE FROM announcements WHERE app_space_id = ${space.id}`);
+
+      await db.execute(sql`DELETE FROM badge_awards WHERE custom_badge_id IN (SELECT id FROM custom_badges WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM custom_badges WHERE app_space_id = ${space.id}`);
+
+      await db.execute(sql`DELETE FROM survey_responses WHERE app_space_id = ${space.id}`);
+      await db.execute(sql`DELETE FROM survey_questions WHERE app_space_id = ${space.id}`);
+      await db.execute(sql`DELETE FROM waitlist_members WHERE app_space_id = ${space.id}`);
+
+      await db.execute(sql`DELETE FROM app_spaces WHERE id = ${space.id}`);
+    }
+
+    await db.delete(ticketPolicyEvents).where(eq(ticketPolicyEvents.reporterUserId, userId));
+    await db.delete(ticketAuditEvents).where(eq(ticketAuditEvents.actorUserId, userId));
+    await db.delete(authRiskEvents).where(eq(authRiskEvents.userId, userId));
+    await db.delete(authVerifications).where(eq(authVerifications.userId, userId));
+
+    await db.delete(notifications).where(eq(notifications.userId, userId));
+    await db.delete(userChannelRead).where(eq(userChannelRead.userId, userId));
+    await db.delete(messageReactions).where(eq(messageReactions.userId, userId));
+    await db.delete(directMessages).where(eq(directMessages.senderId, userId));
+    await db.delete(conversationParticipants).where(eq(conversationParticipants.userId, userId));
+    await db.delete(chatMessages).where(eq(chatMessages.userId, userId));
+    await db.delete(pollVotes).where(eq(pollVotes.userId, userId));
+    await db.delete(surveyResponses).where(eq(surveyResponses.userId, userId));
+    await db.delete(waitlistMembers).where(eq(waitlistMembers.userId, userId));
+
+    await db.delete(badgeAwards).where(or(eq(badgeAwards.userId, userId), eq(badgeAwards.awardedBy, userId)));
+    await db.delete(userSettings).where(eq(userSettings.userId, userId));
+    await db.delete(appSpaceDrafts).where(eq(appSpaceDrafts.userId, userId));
+
+    await db.delete(users).where(eq(users.id, userId));
+  }
+
 }
 
 export const storage = new DbStorage();

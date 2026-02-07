@@ -35,6 +35,16 @@ interface ProfileData {
     appSpaceName: string;
     appSpaceSlug: string;
   }>;
+  goldenTicketStatus: Array<{
+    appSpaceId: number;
+    appSpaceName: string;
+    appSpaceSlug: string;
+    membershipStatus: "pending" | "approved" | "rejected" | "banned";
+    status: "open" | "selected" | "closed";
+    selected: boolean;
+    selectedAt: string | null;
+    isWinner: boolean;
+  }>;
 }
 
 export default function Profile() {
@@ -71,6 +81,7 @@ export default function Profile() {
   const user = profileData?.user;
   const badges = profileData?.badges || [];
   const memberships = profileData?.memberships || [];
+  const goldenTicketStatus = profileData?.goldenTicketStatus || [];
 
   const memberSince = user?.createdAt 
     ? new Date(user.createdAt).toLocaleDateString("en-US", { month: "long", year: "numeric" })
@@ -178,6 +189,40 @@ export default function Profile() {
                       })}
                     </p>
                   </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="mb-8">
+          <h2 className="mb-4 text-lg font-bold text-white">Golden Ticket Status</h2>
+          {goldenTicketStatus.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.02] p-8 backdrop-blur-[20px]">
+              <Award className="mb-3 h-12 w-12 text-white/20" />
+              <p className="text-white/60">Join communities to become Golden Ticket eligible</p>
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {goldenTicketStatus.map((ticket, index) => (
+                <div key={ticket.appSpaceId} className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4 backdrop-blur-[20px]" data-testid={`card-golden-ticket-${index}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-white">{ticket.appSpaceName}</p>
+                      <p className="text-xs text-white/50">Membership: {ticket.membershipStatus}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Badge variant={ticket.status === "open" ? "active" : "glass"}>{ticket.status === "open" ? "Open" : "Selected"}</Badge>
+                      {ticket.isWinner && <Badge variant="first">Winner</Badge>}
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm text-white/70">
+                    {ticket.isWinner
+                      ? "You were selected for this community's Golden Ticket."
+                      : ticket.status === "open"
+                        ? "Golden Ticket is still open in this community."
+                        : "Golden Ticket was selected. Winner identity stays private."}
+                  </p>
                 </div>
               ))}
             </div>

@@ -202,6 +202,10 @@ export const userSettings = pgTable("user_settings", {
   emailNotifications: boolean("email_notifications").notNull().default(true),
   smsNotifications: boolean("sms_notifications").notNull().default(true),
   pollReminders: boolean("poll_reminders").notNull().default(true),
+  dmNotifications: boolean("dm_notifications").notNull().default(true),
+  badgeAlerts: boolean("badge_alerts").notNull().default(true),
+  showOnlineStatus: boolean("show_online_status").notNull().default(true),
+  allowDmsFromAnyone: boolean("allow_dms_from_anyone").notNull().default(false),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
@@ -211,6 +215,144 @@ export const insertUserSettingsSchema = createInsertSchema(userSettings).omit({
 });
 export type InsertUserSettings = z.infer<typeof insertUserSettingsSchema>;
 export type UserSettings = typeof userSettings.$inferSelect;
+
+// OTP verification attempts and active verification records
+export const authVerifications = pgTable("auth_verifications", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  method: text("method").notNull(), // phone | email
+  target: text("target").notNull(), // normalized phone/email
+  codeHash: text("code_hash").notNull(),
+  ipAddress: text("ip_address"),
+  attempts: integer("attempts").notNull().default(0),
+  maxAttempts: integer("max_attempts").notNull().default(5),
+  lockedUntil: timestamp("locked_until"),
+  expiresAt: timestamp("expires_at").notNull(),
+  consumedAt: timestamp("consumed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertAuthVerificationSchema = createInsertSchema(authVerifications).omit({
+  id: true,
+  attempts: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertAuthVerification = z.infer<typeof insertAuthVerificationSchema>;
+export type AuthVerification = typeof authVerifications.$inferSelect;
+
+// Risk and trust events for auth and anti-fraud baselines
+export const authRiskEvents = pgTable("auth_risk_events", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").references(() => users.id),
+  method: text("method").notNull(), // phone | email
+  target: text("target"),
+  eventType: text("event_type").notNull(), // rate_limited | collision | lockout | suspicious_ip
+  severity: text("severity").notNull().default("medium"), // low | medium | high | critical
+  ipAddress: text("ip_address"),
+  metadata: text("metadata"), // JSON payload
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertAuthRiskEventSchema = createInsertSchema(authRiskEvents).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertAuthRiskEvent = z.infer<typeof insertAuthRiskEventSchema>;
+export type AuthRiskEvent = typeof authRiskEvents.$inferSelect;
+
+// Golden Ticket core table (exactly one winner per app space, service-contingent lifetime)
+export const goldenTickets = pgTable("golden_tickets", {
+  id: serial("id").primaryKey(),
+  appSpaceId: integer("app_space_id").notNull().references(() => appSpaces.id).unique(),
+  status: text("status").notNull().default("open"), // open | selected | closed
+  winnerUserId: text("winner_user_id").references(() => users.id),
+  selectedByUserId: text("selected_by_user_id").references(() => users.id),
+  selectedAt: timestamp("selected_at"),
+  selectionReason: text("selection_reason"),
+  serviceContingent: boolean("service_contingent").notNull().default(true),
+  nonTransferable: boolean("non_transferable").notNull().default(true),
+  rateLimitedByPolicy: boolean("rate_limited_by_policy").notNull().default(true),
+  winnerVisibility: text("winner_visibility").notNull().default("status_only"), // status_only
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertGoldenTicketSchema = createInsertSchema(goldenTickets).omit({
+  id: true,
+  selectedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertGoldenTicket = z.infer<typeof insertGoldenTicketSchema>;
+export type GoldenTicket = typeof goldenTickets.$inferSelect;
+
+// Configurable Golden Ticket tiers, minimum 3 required on publish
+export const ticketTiers = pgTable("ticket_tiers", {
+  id: serial("id").primaryKey(),
+  goldenTicketId: integer("golden_ticket_id").notNull().references(() => goldenTickets.id),
+  rank: integer("rank").notNull(),
+  label: text("label").notNull(),
+  reward: text("reward").notNull(),
+  isLifetime: boolean("is_lifetime").notNull().default(false),
+  benefits: text("benefits"), // JSON array of strings
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertTicketTierSchema = createInsertSchema(ticketTiers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertTicketTier = z.infer<typeof insertTicketTierSchema>;
+export type TicketTier = typeof ticketTiers.$inferSelect;
+
+// Immutable audit trail for all Golden Ticket policy and winner lifecycle actions
+export const ticketAuditEvents = pgTable("ticket_audit_events", {
+  id: serial("id").primaryKey(),
+  appSpaceId: integer("app_space_id").notNull().references(() => appSpaces.id),
+  goldenTicketId: integer("golden_ticket_id").notNull().references(() => goldenTickets.id),
+  actorUserId: text("actor_user_id").references(() => users.id),
+  eventType: text("event_type").notNull(), // policy_updated | tiers_updated | winner_selected | policy_reported | policy_resolved
+  eventData: text("event_data"), // JSON payload
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertTicketAuditEventSchema = createInsertSchema(ticketAuditEvents).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertTicketAuditEvent = z.infer<typeof insertTicketAuditEventSchema>;
+export type TicketAuditEvent = typeof ticketAuditEvents.$inferSelect;
+
+// Policy/fraud report lifecycle events
+export const ticketPolicyEvents = pgTable("ticket_policy_events", {
+  id: serial("id").primaryKey(),
+  appSpaceId: integer("app_space_id").notNull().references(() => appSpaces.id),
+  goldenTicketId: integer("golden_ticket_id").notNull().references(() => goldenTickets.id),
+  reporterUserId: text("reporter_user_id").notNull().references(() => users.id),
+  category: text("category").notNull(), // policy_breach | fraud
+  description: text("description").notNull(),
+  status: text("status").notNull().default("open"), // open | investigating | resolved | rejected
+  resolution: text("resolution"),
+  resolvedByUserId: text("resolved_by_user_id").references(() => users.id),
+  resolvedAt: timestamp("resolved_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertTicketPolicyEventSchema = createInsertSchema(ticketPolicyEvents).omit({
+  id: true,
+  resolution: true,
+  resolvedByUserId: true,
+  resolvedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertTicketPolicyEvent = z.infer<typeof insertTicketPolicyEventSchema>;
+export type TicketPolicyEvent = typeof ticketPolicyEvents.$inferSelect;
 
 // Channels for real-time chat
 export const channels = pgTable("channels", {

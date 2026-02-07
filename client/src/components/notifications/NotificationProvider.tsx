@@ -5,7 +5,7 @@ import { io, Socket } from "socket.io-client";
 export interface Notification {
   id: number;
   userId: string;
-  type: "mention" | "dm" | "channel_message" | "waitlist_approved" | "waitlist_rejected";
+  type: "mention" | "dm" | "channel_message" | "waitlist_approved" | "waitlist_rejected" | "golden_ticket";
   data: string; // JSON string
   read: boolean;
   createdAt: string;
@@ -154,6 +154,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         return `🎉 You've been approved to join ${data.appSpaceName || "a community"}!`;
       case "waitlist_rejected":
         return `Your request to join ${data.appSpaceName || "a community"} was declined`;
+      case "golden_ticket":
+        return data.message || "Golden Ticket update";
       default:
         return data.message || "New notification";
     }

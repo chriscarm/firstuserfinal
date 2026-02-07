@@ -120,6 +120,7 @@ export default function SpaceLandingPage() {
       activeUsers={data.activeUsers}
       waitlistUsers={data.waitlistUsers}
       stats={data.stats}
+      goldenTicket={data.goldenTicket}
     />
   );
 }

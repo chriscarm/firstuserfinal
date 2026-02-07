@@ -10,6 +10,7 @@ import fs from "fs";
 import crypto from "crypto";
 import sharp from "sharp";
 import { sendVerificationEmail } from "./email";
+import { emitNotificationToUser } from "./websocket";
 // TextBelt SMS configuration
 const TEXTBELT_API_KEY = process.env.TEXTBELT_API_KEY || "textbelt";
 
@@ -26,11 +27,59 @@ async function sendTextBeltSMS(phone: string, message: string): Promise<{ succes
   return response.json();
 }
 
-// Store OTPs in memory (in production, use Redis or database)
-const otpStore = new Map<string, { otp: string; expiresAt: number }>();
-
 function generateOTP(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function hashOTP(code: string): string {
+  return crypto.createHash("sha256").update(code).digest("hex");
+}
+
+function getClientIp(req: Request): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.length > 0) {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.ip || "unknown";
+}
+
+async function enforceOtpThrottle(options: {
+  req: Request;
+  method: "phone" | "email";
+  target: string;
+  userId?: string | null;
+}): Promise<{ allowed: boolean; reason?: string }> {
+  const ipAddress = getClientIp(options.req);
+  const perIp = await storage.countRecentAuthVerificationsByIp(ipAddress, 15);
+  const perTarget = await storage.countRecentAuthVerificationsByTarget(options.target, 15);
+
+  if (perIp >= 20) {
+    await storage.createAuthRiskEvent({
+      userId: options.userId ?? null,
+      method: options.method,
+      target: options.target,
+      eventType: "rate_limited_ip",
+      severity: "high",
+      ipAddress,
+      metadata: JSON.stringify({ perIp, perTarget }),
+    });
+    return { allowed: false, reason: "Too many attempts from this network. Please wait and try again." };
+  }
+
+  if (perTarget >= 8) {
+    await storage.createAuthRiskEvent({
+      userId: options.userId ?? null,
+      method: options.method,
+      target: options.target,
+      eventType: "rate_limited_target",
+      severity: "medium",
+      ipAddress,
+      metadata: JSON.stringify({ perIp, perTarget }),
+    });
+    return { allowed: false, reason: "Too many code requests. Please wait before trying again." };
+  }
+
+  return { allowed: true };
 }
 
 // Configure multer for file uploads - use memory storage for sharp processing
@@ -158,6 +207,20 @@ function requireAppSpaceFounder(appSpaceIdParam: string = "id") {
     (req as any).appSpace = appSpace;
     next();
   };
+}
+
+async function createAndEmitNotification(input: {
+  userId: string;
+  type: "mention" | "dm" | "channel_message" | "waitlist_approved" | "waitlist_rejected" | "golden_ticket";
+  data: Record<string, unknown>;
+}) {
+  const notification = await storage.createNotification({
+    userId: input.userId,
+    type: input.type,
+    data: JSON.stringify(input.data),
+  });
+  emitNotificationToUser(input.userId, notification);
+  return notification;
 }
 
 export async function registerRoutes(
@@ -397,15 +460,42 @@ export async function registerRoutes(
         user = await storage.createUserFromPhone(cleanPhone);
       }
 
+      const phoneCollisionCount = await storage.countUsersByPhone(cleanPhone);
+      if (phoneCollisionCount > 1) {
+        await storage.createAuthRiskEvent({
+          userId: user.id,
+          method: "phone",
+          target: cleanPhone,
+          eventType: "phone_collision",
+          severity: "high",
+          ipAddress: getClientIp(req),
+          metadata: JSON.stringify({ phoneCollisionCount }),
+        });
+      }
+
+      const throttle = await enforceOtpThrottle({
+        req,
+        method: "phone",
+        target: cleanPhone,
+        userId: user.id,
+      });
+      if (!throttle.allowed) {
+        return res.status(429).json({ message: throttle.reason });
+      }
+
       // Store pending user ID and auth method in session for verification step
       req.session.pendingUserId = user.id;
       req.session.pendingAuthMethod = "phone";
 
-      // Generate OTP and store it
+      // Generate OTP and persist it
       const otp = generateOTP();
-      otpStore.set(user.id, {
-        otp,
-        expiresAt: Date.now() + 5 * 60 * 1000 // 5 minutes
+      await storage.createAuthVerification({
+        userId: user.id,
+        method: "phone",
+        target: cleanPhone,
+        codeHash: hashOTP(otp),
+        ipAddress: getClientIp(req),
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
       });
 
       // Send OTP via TextBelt
@@ -455,15 +545,24 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid verification method. Please request a new phone code." });
       }
 
-      // Verify OTP from our store
-      const storedOtp = otpStore.get(pendingUserId);
-      const isValidOtp = storedOtp && 
-        storedOtp.otp === code && 
-        storedOtp.expiresAt > Date.now();
+      const verification = await storage.getActiveAuthVerification(pendingUserId, "phone");
+      if (!verification) {
+        return res.status(400).json({ message: "Invalid or expired code" });
+      }
+
+      if (verification.lockedUntil && verification.lockedUntil.getTime() > Date.now()) {
+        return res.status(429).json({ message: "Too many attempts. Please wait before trying again." });
+      }
+
+      if (verification.expiresAt.getTime() <= Date.now()) {
+        await storage.consumeAuthVerification(verification.id);
+        return res.status(400).json({ message: "Invalid or expired code" });
+      }
+
+      const isValidOtp = verification.codeHash === hashOTP(String(code).trim());
 
       if (isValidOtp) {
-        // Clear the OTP after successful verification
-        otpStore.delete(pendingUserId);
+        await storage.consumeAuthVerification(verification.id);
         const user = await storage.getUser(pendingUserId);
         if (!user) {
           return res.status(400).json({ message: "User not found" });
@@ -508,6 +607,21 @@ export async function registerRoutes(
           }
         });
       } else {
+        const nextAttempts = (verification.attempts ?? 0) + 1;
+        const shouldLock = nextAttempts >= (verification.maxAttempts ?? 5);
+        await storage.incrementAuthVerificationAttempt(
+          verification.id,
+          shouldLock ? new Date(Date.now() + 10 * 60 * 1000) : undefined
+        );
+        await storage.createAuthRiskEvent({
+          userId: pendingUserId,
+          method: "phone",
+          target: verification.target,
+          eventType: shouldLock ? "otp_lockout" : "otp_invalid_code",
+          severity: shouldLock ? "high" : "medium",
+          ipAddress: getClientIp(req),
+          metadata: JSON.stringify({ attempts: nextAttempts }),
+        });
         return res.status(400).json({ message: "Invalid or expired code" });
       }
     } catch (error) {
@@ -615,15 +729,42 @@ export async function registerRoutes(
         user = await storage.createUser({ email: normalizedEmail, password: "" });
       }
 
+      const emailCollisionCount = await storage.countUsersByEmail(normalizedEmail);
+      if (emailCollisionCount > 1) {
+        await storage.createAuthRiskEvent({
+          userId: user.id,
+          method: "email",
+          target: normalizedEmail,
+          eventType: "email_collision",
+          severity: "high",
+          ipAddress: getClientIp(req),
+          metadata: JSON.stringify({ emailCollisionCount }),
+        });
+      }
+
+      const throttle = await enforceOtpThrottle({
+        req,
+        method: "email",
+        target: normalizedEmail,
+        userId: user.id,
+      });
+      if (!throttle.allowed) {
+        return res.status(429).json({ message: throttle.reason });
+      }
+
       // Store pending user ID in session for verification step
       req.session.pendingUserId = user.id;
       req.session.pendingAuthMethod = "email";
 
-      // Generate OTP and store it
+      // Generate OTP and persist it
       const otp = generateOTP();
-      otpStore.set(user.id, {
-        otp,
-        expiresAt: Date.now() + 5 * 60 * 1000 // 5 minutes
+      await storage.createAuthVerification({
+        userId: user.id,
+        method: "email",
+        target: normalizedEmail,
+        codeHash: hashOTP(otp),
+        ipAddress: getClientIp(req),
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
       });
 
       // Send OTP via email
@@ -672,15 +813,24 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid verification method. Please request a new email code." });
       }
 
-      // Verify OTP from our store
-      const storedOtp = otpStore.get(pendingUserId);
-      const isValidOtp = storedOtp &&
-        storedOtp.otp === code &&
-        storedOtp.expiresAt > Date.now();
+      const verification = await storage.getActiveAuthVerification(pendingUserId, "email");
+      if (!verification) {
+        return res.status(400).json({ message: "Invalid or expired code" });
+      }
+
+      if (verification.lockedUntil && verification.lockedUntil.getTime() > Date.now()) {
+        return res.status(429).json({ message: "Too many attempts. Please wait before trying again." });
+      }
+
+      if (verification.expiresAt.getTime() <= Date.now()) {
+        await storage.consumeAuthVerification(verification.id);
+        return res.status(400).json({ message: "Invalid or expired code" });
+      }
+
+      const isValidOtp = verification.codeHash === hashOTP(String(code).trim());
 
       if (isValidOtp) {
-        // Clear the OTP after successful verification
-        otpStore.delete(pendingUserId);
+        await storage.consumeAuthVerification(verification.id);
         const user = await storage.getUser(pendingUserId);
         if (!user) {
           return res.status(400).json({ message: "User not found" });
@@ -721,6 +871,21 @@ export async function registerRoutes(
           },
         });
       } else {
+        const nextAttempts = (verification.attempts ?? 0) + 1;
+        const shouldLock = nextAttempts >= (verification.maxAttempts ?? 5);
+        await storage.incrementAuthVerificationAttempt(
+          verification.id,
+          shouldLock ? new Date(Date.now() + 10 * 60 * 1000) : undefined
+        );
+        await storage.createAuthRiskEvent({
+          userId: pendingUserId,
+          method: "email",
+          target: verification.target,
+          eventType: shouldLock ? "otp_lockout" : "otp_invalid_code",
+          severity: shouldLock ? "high" : "medium",
+          ipAddress: getClientIp(req),
+          metadata: JSON.stringify({ attempts: nextAttempts }),
+        });
         return res.status(400).json({ message: "Invalid or expired code" });
       }
     } catch (error) {
@@ -831,11 +996,14 @@ export async function registerRoutes(
           const members = await storage.getWaitlistMembers(appSpace.id);
           const approvedCount = members.filter((member) => member.status === "approved").length;
           const pendingCount = members.filter((member) => member.status === "pending").length;
+          const goldenTicket = await storage.getGoldenTicketPublicSummary(appSpace.id);
           return {
             ...appSpace,
             memberCount: members.length,
             approvedCount,
             pendingCount,
+            goldenTicketStatus: goldenTicket.status,
+            goldenTicketSelected: goldenTicket.selected,
           };
         })
       );
@@ -956,8 +1124,10 @@ export async function registerRoutes(
         activeCount: await storage.getActiveCount(appSpace.id),
         waitlistCount: await storage.getWaitlistCount(appSpace.id),
       };
-      
-      return res.json({ appSpace, activeUsers, waitlistUsers, stats });
+      const currentUserId = req.session?.userId;
+      const goldenTicket = await storage.getGoldenTicketPublicSummary(appSpace.id, currentUserId);
+
+      return res.json({ appSpace, activeUsers, waitlistUsers, stats, goldenTicket });
     } catch (error) {
       throw error;
     }
@@ -1089,12 +1259,24 @@ export async function registerRoutes(
   app.patch("/api/users/me/settings", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
-      const { emailNotifications, smsNotifications, pollReminders } = req.body;
+      const {
+        emailNotifications,
+        smsNotifications,
+        pollReminders,
+        dmNotifications,
+        badgeAlerts,
+        showOnlineStatus,
+        allowDmsFromAnyone,
+      } = req.body;
 
       const settings = await storage.saveUserSettings(userId, {
         emailNotifications,
         smsNotifications,
         pollReminders,
+        dmNotifications,
+        badgeAlerts,
+        showOnlineStatus,
+        allowDmsFromAnyone,
       });
 
       return res.json({ success: true, settings });
@@ -1108,11 +1290,30 @@ export async function registerRoutes(
       const userId = req.session.userId!;
       const settings = await storage.getUserSettings(userId);
 
-      // Return defaults if no settings exist
       return res.json(settings || {
         emailNotifications: true,
         smsNotifications: true,
         pollReminders: true,
+        dmNotifications: true,
+        badgeAlerts: true,
+        showOnlineStatus: true,
+        allowDmsFromAnyone: false,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.delete("/api/users/me", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      await storage.deleteUserAccount(userId);
+
+      req.session.destroy((err) => {
+        if (err) {
+          return res.status(500).json({ message: "Account deleted but failed to end session" });
+        }
+        return res.json({ success: true });
       });
     } catch (error) {
       throw error;
@@ -1206,14 +1407,14 @@ export async function registerRoutes(
           }
 
           // Create in-app notification
-          await storage.createNotification({
+          await createAndEmitNotification({
             userId: targetUserId,
             type: "waitlist_approved",
-            data: JSON.stringify({
+            data: {
               appSpaceId,
               appSpaceName: appSpace.name,
               appSpaceSlug: appSpace.slug,
-            }),
+            },
           });
 
           const user = await storage.getUser(targetUserId);
@@ -1228,14 +1429,14 @@ export async function registerRoutes(
 
         if (status === "rejected") {
           // Create in-app notification for rejection
-          await storage.createNotification({
+          await createAndEmitNotification({
             userId: targetUserId,
             type: "waitlist_rejected",
-            data: JSON.stringify({
+            data: {
               appSpaceId,
               appSpaceName: appSpace.name,
               appSpaceSlug: appSpace.slug,
-            }),
+            },
           });
         }
 
@@ -1298,14 +1499,14 @@ export async function registerRoutes(
             }
 
             // Create in-app notification
-            await storage.createNotification({
+            await createAndEmitNotification({
               userId,
               type: "waitlist_approved",
-              data: JSON.stringify({
+              data: {
                 appSpaceId,
                 appSpaceName: appSpace.name,
                 appSpaceSlug: appSpace.slug,
-              }),
+              },
             });
 
             const user = await storage.getUser(userId);
@@ -1320,14 +1521,14 @@ export async function registerRoutes(
 
           if (status === "rejected") {
             // Create in-app notification for rejection
-            await storage.createNotification({
+            await createAndEmitNotification({
               userId,
               type: "waitlist_rejected",
-              data: JSON.stringify({
+              data: {
                 appSpaceId,
                 appSpaceName: appSpace.name,
                 appSpaceSlug: appSpace.slug,
-              }),
+              },
             });
           }
 
@@ -1687,7 +1888,22 @@ export async function registerRoutes(
       
       const badges = await storage.getUserBadgeAwards(userId);
       const waitlistMemberships = await storage.getUserWaitlistMemberships(userId);
-      
+      const goldenTicketStatus = await Promise.all(
+        waitlistMemberships.map(async (membership) => {
+          const summary = await storage.getGoldenTicketPublicSummary(membership.appSpaceId, userId);
+          return {
+            appSpaceId: membership.appSpaceId,
+            appSpaceName: membership.appSpaceName,
+            appSpaceSlug: membership.appSpaceSlug,
+            membershipStatus: membership.status,
+            status: summary.status,
+            selected: summary.selected,
+            selectedAt: summary.selectedAt,
+            isWinner: summary.isWinner,
+          };
+        })
+      );
+
       return res.json({ 
         user: { 
           id: user.id, 
@@ -1698,8 +1914,426 @@ export async function registerRoutes(
           createdAt: user.createdAt
         },
         badges,
-        memberships: waitlistMemberships 
+        memberships: waitlistMemberships,
+        goldenTicketStatus,
       });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  const goldenTicketPolicySchema = z.object({
+    serviceContingent: z.boolean().optional(),
+    nonTransferable: z.boolean().optional(),
+    rateLimitedByPolicy: z.boolean().optional(),
+    winnerVisibility: z.literal("status_only").optional(),
+  });
+
+  const goldenTicketTierSchema = z.object({
+    rank: z.number().int().min(1).max(1000),
+    label: z.string().min(1).max(60),
+    reward: z.string().min(1).max(240),
+    isLifetime: z.boolean(),
+    benefits: z.array(z.string().min(1).max(240)).optional(),
+  });
+
+  const selectGoldenTicketWinnerSchema = z.object({
+    winnerUserId: z.string().min(1),
+    reason: z.string().max(500).optional(),
+  });
+
+  const reportGoldenTicketSchema = z.object({
+    category: z.enum(["policy_breach", "fraud"]),
+    description: z.string().min(10).max(2000),
+  });
+
+  const resolvePolicyEventSchema = z.object({
+    status: z.enum(["investigating", "resolved", "rejected"]),
+    resolution: z.string().max(2000).optional(),
+  });
+
+  // Golden Ticket public status (winner identity remains private)
+  app.get("/api/appspaces/:id/golden-ticket/public", async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      if (Number.isNaN(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid appspace ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const ticket = await storage.getOrCreateGoldenTicket(appSpaceId);
+      const tiers = await storage.getTicketTiers(ticket.id);
+      const summary = await storage.getGoldenTicketPublicSummary(appSpaceId, req.session?.userId);
+
+      return res.json({
+        appSpaceId,
+        status: summary.status,
+        selected: summary.selected,
+        selectedAt: summary.selectedAt,
+        isWinner: summary.isWinner,
+        serviceContingent: summary.serviceContingent,
+        winnerVisibility: ticket.winnerVisibility,
+        tiers: tiers.map((tier) => ({
+          id: tier.id,
+          rank: tier.rank,
+          label: tier.label,
+          reward: tier.reward,
+          isLifetime: tier.isLifetime,
+          benefits: tier.benefits ? JSON.parse(tier.benefits) : [tier.reward],
+        })),
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  // Golden Ticket founder view (includes winner identity + audit data)
+  app.get("/api/appspaces/:id/golden-ticket/founder", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      if (Number.isNaN(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid appspace ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const currentUser = await storage.getUser(req.session.userId!);
+      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+
+      const ticket = await storage.getOrCreateGoldenTicket(appSpaceId);
+      const tiers = await storage.getTicketTiers(ticket.id);
+      const audits = await storage.getTicketAuditEvents(appSpaceId);
+      const policyEvents = await storage.getTicketPolicyEvents(appSpaceId);
+      const winner = ticket.winnerUserId ? await storage.getUser(ticket.winnerUserId) : null;
+
+      return res.json({
+        ticket,
+        tiers: tiers.map((tier) => ({
+          ...tier,
+          benefits: tier.benefits ? JSON.parse(tier.benefits) : [tier.reward],
+        })),
+        winner: winner
+          ? {
+              id: winner.id,
+              username: winner.username,
+              displayName: winner.displayName,
+              email: winner.email,
+              phone: winner.phone,
+            }
+          : null,
+        audits,
+        policyEvents,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.put("/api/appspaces/:id/golden-ticket/policy", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      if (Number.isNaN(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid appspace ID" });
+      }
+
+      const parsed = goldenTicketPolicySchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid policy payload" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const currentUser = await storage.getUser(req.session.userId!);
+      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+
+      const ticket = await storage.updateGoldenTicketPolicy(appSpaceId, parsed.data);
+      await storage.createTicketAuditEvent({
+        appSpaceId,
+        goldenTicketId: ticket.id,
+        actorUserId: req.session.userId,
+        eventType: "policy_updated",
+        eventData: JSON.stringify(parsed.data),
+      });
+
+      return res.json({ ticket });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.put("/api/appspaces/:id/golden-ticket/tiers", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      if (Number.isNaN(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid appspace ID" });
+      }
+
+      const parsed = z.object({ tiers: z.array(goldenTicketTierSchema).min(3) }).safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid tiers payload" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const currentUser = await storage.getUser(req.session.userId!);
+      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+
+      const ticket = await storage.getOrCreateGoldenTicket(appSpaceId);
+      const existingTiers = await storage.getTicketTiers(ticket.id);
+      const incomingTiers = [...parsed.data.tiers].sort((a, b) => a.rank - b.rank);
+
+      const rankOne = incomingTiers.find((tier) => tier.rank === 1);
+      if (!rankOne || !rankOne.isLifetime) {
+        return res.status(400).json({ message: "Tier 1 lifetime benefit is mandatory" });
+      }
+
+      // Additive-only rule: do not remove existing tier ranks or existing tier benefits.
+      for (const existing of existingTiers) {
+        const next = incomingTiers.find((tier) => tier.rank === existing.rank);
+        if (!next) {
+          return res.status(400).json({ message: "Cannot remove existing tier rank " + existing.rank });
+        }
+        const existingBenefits = new Set<string>(existing.benefits ? JSON.parse(existing.benefits) : [existing.reward]);
+        const nextBenefits = new Set<string>(next.benefits && next.benefits.length > 0 ? next.benefits : [next.reward]);
+        for (const benefit of Array.from(existingBenefits)) {
+          if (!nextBenefits.has(benefit)) {
+            return res.status(400).json({ message: "Tier " + existing.rank + " benefits can be added but not removed" });
+          }
+        }
+      }
+
+      const tiers = await storage.replaceTicketTiers(ticket.id, incomingTiers.map((tier) => ({
+        rank: tier.rank,
+        label: tier.label,
+        reward: tier.reward,
+        isLifetime: tier.isLifetime,
+        benefits: tier.benefits,
+      })));
+
+      await storage.createTicketAuditEvent({
+        appSpaceId,
+        goldenTicketId: ticket.id,
+        actorUserId: req.session.userId,
+        eventType: "tiers_updated",
+        eventData: JSON.stringify({ count: tiers.length }),
+      });
+
+      return res.json({
+        tiers: tiers.map((tier) => ({
+          ...tier,
+          benefits: tier.benefits ? JSON.parse(tier.benefits) : [tier.reward],
+        })),
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.post("/api/appspaces/:id/golden-ticket/select-winner", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      if (Number.isNaN(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid appspace ID" });
+      }
+
+      const parsed = selectGoldenTicketWinnerSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid selection payload" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const currentUser = await storage.getUser(req.session.userId!);
+      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+
+      const ticket = await storage.getOrCreateGoldenTicket(appSpaceId);
+      if (ticket.winnerUserId || ticket.status === "selected") {
+        return res.status(409).json({ message: "Winner already selected" });
+      }
+
+      const winner = await storage.getUser(parsed.data.winnerUserId);
+      if (!winner) {
+        return res.status(404).json({ message: "Winner user not found" });
+      }
+
+      // Team-edge rule: cannot select an existing team member.
+      if (winner.id === appSpace.founderId || winner.hasFounderAccess) {
+        return res.status(400).json({ message: "Winner cannot already be part of the team at selection time" });
+      }
+
+      const updated = await storage.selectGoldenTicketWinner(
+        appSpaceId,
+        winner.id,
+        req.session.userId!,
+        parsed.data.reason
+      );
+
+      await storage.createTicketAuditEvent({
+        appSpaceId,
+        goldenTicketId: ticket.id,
+        actorUserId: req.session.userId,
+        eventType: "winner_selected",
+        eventData: JSON.stringify({ winnerUserId: winner.id }),
+      });
+
+      await createAndEmitNotification({
+        userId: winner.id,
+        type: "golden_ticket",
+        data: {
+          message: "You were selected for " + appSpace.name + "'s Golden Ticket.",
+          appSpaceId,
+          appSpaceName: appSpace.name,
+          appSpaceSlug: appSpace.slug,
+        },
+      });
+
+      return res.json({
+        status: updated.status,
+        selectedAt: updated.selectedAt,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.post("/api/appspaces/:id/golden-ticket/report", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      if (Number.isNaN(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid appspace ID" });
+      }
+
+      const parsed = reportGoldenTicketSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid report payload" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const ticket = await storage.getOrCreateGoldenTicket(appSpaceId);
+      const event = await storage.createTicketPolicyEvent({
+        appSpaceId,
+        goldenTicketId: ticket.id,
+        reporterUserId: req.session.userId!,
+        category: parsed.data.category,
+        description: parsed.data.description,
+      });
+
+      await storage.createTicketAuditEvent({
+        appSpaceId,
+        goldenTicketId: ticket.id,
+        actorUserId: req.session.userId,
+        eventType: "policy_reported",
+        eventData: JSON.stringify({ policyEventId: event.id, category: event.category }),
+      });
+
+      return res.status(201).json({ event });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.get("/api/appspaces/:id/golden-ticket/audit", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      if (Number.isNaN(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid appspace ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const currentUser = await storage.getUser(req.session.userId!);
+      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+
+      const audits = await storage.getTicketAuditEvents(appSpaceId);
+      const policyEvents = await storage.getTicketPolicyEvents(appSpaceId);
+      return res.json({ audits, policyEvents });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.patch("/api/admin/policy-events/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id as string);
+      if (Number.isNaN(id)) {
+        return res.status(400).json({ message: "Invalid policy event ID" });
+      }
+
+      const currentUser = await storage.getUser(req.session.userId!);
+      if (!currentUser?.hasFounderAccess) {
+        return res.status(403).json({ message: "Admin access required" });
+      }
+
+      const existing = await storage.getTicketPolicyEventById(id);
+      if (!existing) {
+        return res.status(404).json({ message: "Policy event not found" });
+      }
+
+      const parsed = resolvePolicyEventSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid resolution payload" });
+      }
+
+      const resolvedAt = parsed.data.status === "resolved" || parsed.data.status === "rejected" ? new Date() : null;
+
+      const event = await storage.updateTicketPolicyEvent(id, {
+        status: parsed.data.status,
+        resolution: parsed.data.resolution ?? null,
+        resolvedByUserId: req.session.userId!,
+        resolvedAt,
+      });
+
+      await storage.createTicketAuditEvent({
+        appSpaceId: existing.appSpaceId,
+        goldenTicketId: existing.goldenTicketId,
+        actorUserId: req.session.userId,
+        eventType: "policy_resolved",
+        eventData: JSON.stringify({ policyEventId: id, status: parsed.data.status }),
+      });
+
+      await createAndEmitNotification({
+        userId: existing.reporterUserId,
+        type: "golden_ticket",
+        data: {
+          message: "Your Golden Ticket report was updated: " + parsed.data.status + ".",
+          appSpaceId: existing.appSpaceId,
+        },
+      });
+
+      return res.json({ event });
     } catch (error) {
       throw error;
     }
@@ -2180,6 +2814,20 @@ export async function registerRoutes(
           avatarUrl: user!.avatarUrl,
         },
       };
+
+      const participants = await storage.getConversationParticipants(conversationId);
+      const recipientIds = participants.map((participant) => participant.id).filter((id) => id !== userId);
+      await Promise.all(recipientIds.map((recipientId) =>
+        createAndEmitNotification({
+          userId: recipientId,
+          type: "dm",
+          data: {
+            senderName: user?.displayName || user?.username || "Someone",
+            conversationId,
+            appSpaceId: conversation.appSpaceId,
+          },
+        })
+      ));
 
       return res.status(201).json(messageWithUser);
     } catch (error) {
