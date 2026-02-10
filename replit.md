@@ -86,6 +86,8 @@ shared/             # Shared types and schemas
 
 ## Handoff Checklist
 
+For a generic, copy/pasteable setup guide (Replit source-of-truth + SSH push to GitHub), see `docs/REPLIT_SSH_GITHUB_WORKFLOW.md`.
+
 Use this checklist whenever an agent starts or finishes work in this Replit workspace.
 
 ### 1) Confirm GitHub Push Will Work From SSH
