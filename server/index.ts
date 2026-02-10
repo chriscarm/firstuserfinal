@@ -130,7 +130,7 @@ const sessionMiddleware = session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: "auto",
     maxAge: sessionTtl,
     sameSite: "lax",
   },

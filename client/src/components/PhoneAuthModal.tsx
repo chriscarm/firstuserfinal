@@ -409,7 +409,10 @@ function PhoneAuthContent({
       // Move to username step
       setError(null);
       setStep("username");
-    } catch (err) {
+    }
+    catch (err: any) {
+      const msg = (err && typeof err.message === "string") ? err.message : "Failed to update profile";
+      setError(msg);
       console.error("Profile update error:", err);
     }
   };
