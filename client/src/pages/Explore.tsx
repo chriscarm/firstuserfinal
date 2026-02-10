@@ -189,12 +189,6 @@ export default function Explore() {
                           </span>
                         )}
 
-                        <span
-                          className={`absolute top-3 left-3 px-2 py-0.5 text-[10px] font-semibold rounded border ${app.goldenTicketStatus === "open" ? "bg-fuchsia-500/20 border-fuchsia-400/40 text-fuchsia-200" : "bg-white/10 border-white/20 text-white/70"}`}
-                          data-testid={`badge-golden-ticket-${app.slug}`}
-                        >
-                          {app.goldenTicketStatus === "open" ? "Golden Ticket Open" : "Golden Ticket Selected"}
-                        </span>
 
                         {/* App Icon */}
                         <div className="absolute left-1/2 bottom-0 translate-y-1/2 -translate-x-1/2">

@@ -170,7 +170,6 @@ export default function AppSpaceLandingPage({
   activeUsers,
   waitlistUsers,
   stats,
-  goldenTicket,
 }: AppSpaceLandingPageProps) {
   const [, setLocation] = useLocation();
   const { user, openPhoneAuthModal } = useAuth();
@@ -391,26 +390,6 @@ export default function AppSpaceLandingPage({
           >
             {appSpace.tagline}
           </p>
-
-          <div style={{ marginBottom: "24px" }}>
-            <span
-              className={(goldenTicket?.status ?? "open") === "open" ? "bg-fuchsia-500/20 text-fuchsia-200" : "bg-white/10 text-white/80"}
-              style={{
-                display: "inline-flex",
-                padding: "6px 12px",
-                borderRadius: "9999px",
-                border: "1px solid rgba(255, 255, 255, 0.18)",
-                fontSize: "12px",
-                fontWeight: 600,
-                letterSpacing: "0.02em",
-              }}
-            >
-              {(goldenTicket?.status ?? "open") === "open" ? "Golden Ticket Open" : "Golden Ticket Selected"}
-            </span>
-            <p style={{ marginTop: "10px", color: cssVars.textSecondary, fontSize: "13px" }}>
-              Help build this product and you could be chosen for max-tier access free for life (service-contingent).
-            </p>
-          </div>
 
           {/* CTA Buttons (Desktop) */}
           <div className="hidden lg:flex" style={{ alignItems: "center", justifyContent: "center", gap: "12px" }}>
