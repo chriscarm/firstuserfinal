@@ -129,15 +129,49 @@ function ChatRoomView({
   onJoinWaitlist: () => void;
 }) {
   const { user } = useAuth();
-  const { messages, sendMessage, connected, joinChannel, leaveChannel, currentChannelId } = useChat();
+  const { messages, sendMessage, connected, joinChannel, leaveChannel, currentChannelId, loadMessages } = useChat();
   const [newMessageText, setNewMessageText] = useState("");
+  const [publicMessages, setPublicMessages] = useState<any[]>([]);
+  const [isLoadingPublicMessages, setIsLoadingPublicMessages] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+
+    // Spectators do not have a websocket session (server disconnects unauthenticated sockets),
+    // so we fetch a public read-only message preview over HTTP.
+    if (channel.id && isSpectator) {
+      setIsLoadingPublicMessages(true);
+      fetch(`/api/channels/${channel.id}/messages/public?limit=50`, { credentials: "include" })
+        .then(async (res) => {
+          if (!res.ok) throw new Error("Failed to load public messages");
+          return res.json();
+        })
+        .then((data) => {
+          if (!cancelled) setPublicMessages(data.messages || []);
+        })
+        .catch((error) => {
+          console.error("[ChatRoomView] Failed to load public messages:", error);
+          if (!cancelled) setPublicMessages([]);
+        })
+        .finally(() => {
+          if (!cancelled) setIsLoadingPublicMessages(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // Authenticated users use websocket + regular message history endpoint.
     if (channel.id && appSpaceId && !isSpectator) {
       joinChannel(channel.id, appSpaceId);
+      loadMessages(channel.id);
       return () => leaveChannel();
     }
-  }, [channel.id, appSpaceId, joinChannel, leaveChannel, isSpectator]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [channel.id, appSpaceId, joinChannel, leaveChannel, isSpectator, loadMessages]);
 
   const handleSendMessage = () => {
     if (!newMessageText.trim() || !canChat) return;
@@ -147,6 +181,7 @@ function ChatRoomView({
 
   // Only show messages if we're in the current channel
   const channelMessages = currentChannelId === channel.id ? messages : [];
+  const effectiveMessages = isSpectator ? publicMessages : channelMessages;
 
   // Check if user can access this channel
   const isLockedChannel = channel.isLocked && !channel.isWaitlistersOnly;
@@ -168,7 +203,11 @@ function ChatRoomView({
     <div className="flex flex-col h-full">
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {channelMessages.length === 0 ? (
+        {isSpectator && isLoadingPublicMessages ? (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="h-6 w-6 animate-spin text-white/40" />
+          </div>
+        ) : effectiveMessages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <Hash className="h-12 w-12 text-white/10 mb-3" />
             <p className="text-white/55">No messages yet</p>
@@ -177,7 +216,7 @@ function ChatRoomView({
             )}
           </div>
         ) : (
-          channelMessages.map((msg: any) => (
+          effectiveMessages.map((msg: any) => (
             <div key={msg.id} className="flex gap-3">
               <Avatar className="h-10 w-10 shrink-0">
                 {msg.user?.avatarUrl ? (
@@ -487,7 +526,9 @@ function SpaceCommunityContent() {
     setLocation(`/space/${community.slug}/community`);
   };
 
-  // Separate channels into waitlist and members-only
+  // Separate channels into community, waitlist, and members-only.
+  // Community channels are public/unlocked and should show up for spectators (read-only preview).
+  const communityChannels = channels.filter(c => !c.isLocked && !c.isWaitlistersOnly);
   const waitlistChannels = channels.filter(c => c.isWaitlistersOnly);
   const membersOnlyChannels = channels.filter(c => c.isLocked && !c.isWaitlistersOnly);
 
@@ -504,6 +545,49 @@ function SpaceCommunityContent() {
         </div>
       ) : (
         <>
+          {/* Community Channels Section */}
+          {communityChannels.length > 0 && (
+            <>
+              <SectionHeader title="Community" />
+              {communityChannels.map((channel) => {
+                const channelUnread = unreadCounts[channel.id] || 0;
+                const isActive = selectedChannel?.id === channel.id && !showDMView;
+                return (
+                  <div
+                    key={channel.id}
+                    onClick={() => handleChannelSelect(channel)}
+                    className={`flex items-center gap-2 h-11 px-2 rounded-lg cursor-pointer transition-all duration-200 group ${
+                      isActive
+                        ? "bg-white/[0.08] text-white/90"
+                        : "hover:bg-white/[0.04]"
+                    }`}
+                  >
+                    <ChannelIcon
+                      name={channel.name}
+                      className={`h-4 w-4 ${isActive ? "text-white/90" : "text-white/45"}`}
+                    />
+                    <span
+                      className={`flex-1 text-sm ${
+                        isActive
+                          ? "text-white/90 font-medium"
+                          : "text-white/50 group-hover:text-white/70"
+                      }`}
+                    >
+                      {channel.name}
+                    </span>
+                    {channelUnread > 0 && !isActive ? (
+                      <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
+                        {channelUnread > 99 ? "99+" : channelUnread}
+                      </span>
+                    ) : isActive ? (
+                      <div className="w-2 h-2 rounded-full bg-white/60" />
+                    ) : null}
+                  </div>
+                );
+              })}
+            </>
+          )}
+
           {/* Waitlist Channels Section */}
           {waitlistChannels.length > 0 && (
             <>

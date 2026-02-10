@@ -2523,6 +2523,41 @@ export async function registerRoutes(
   });
 
   // Get messages from a channel
+  // Public read-only message preview (spectator mode).
+  // This is intentionally restricted so we don't accidentally make every community public.
+  app.get("/api/channels/:channelId/messages/public", async (req, res) => {
+    try {
+      const channelId = parseInt(req.params.channelId as string);
+      const before = req.query.before ? parseInt(req.query.before as string) : undefined;
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+
+      const channel = await storage.getChannel(channelId);
+      if (!channel) {
+        return res.status(404).json({ message: "Channel not found" });
+      }
+
+      const appSpace = await storage.getAppSpace(channel.appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      // Only allow public preview for the FirstUser community for now.
+      if (appSpace.slug !== "firstuser") {
+        return res.status(403).json({ message: "Public preview not available for this community" });
+      }
+
+      // Only allow previewing truly public channels.
+      if (channel.isLocked || channel.isWaitlistersOnly) {
+        return res.status(403).json({ message: "This channel is not publicly viewable" });
+      }
+
+      const messages = await storage.getMessages(channelId, limit, before);
+      return res.json({ messages, channelId });
+    } catch (error) {
+      throw error;
+    }
+  });
+
   app.get("/api/channels/:channelId/messages", requireAuth, async (req, res) => {
     try {
       const channelId = parseInt(req.params.channelId as string);
