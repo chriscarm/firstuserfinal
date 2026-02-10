@@ -118,6 +118,10 @@ git remote -v
 ssh -T git@github.com
 
 git checkout -b ssh-push-test
+# Some environments require setting identity before committing.
+git config user.name "Replit SSH Push"
+git config user.email "replit-ssh-push@localhost"
+
 git commit --allow-empty -m "sync test"
 git push -u origin ssh-push-test
 
@@ -145,6 +149,8 @@ Recommended convention:
 - `verify`: stricter checks before pushing to `main`
 
 Example (adjust to your repo):
+
+If your repo has tests, consider including them in `verify` (for example: `npm run check && npm test && npm run build`).
 
 ```json
 "scripts": {
@@ -218,3 +224,49 @@ After each meaningful chunk:
 - Never commit secrets. Use Replit Secrets.
 - Keep `origin` as SSH so SSH pushes never prompt for credentials.
 - Prefer fewer, meaningful commits over hundreds of tiny commits.
+
+---
+
+## Troubleshooting (Fast)
+
+### `git push` prompts for username/password
+- Cause: `origin` is HTTPS.
+- Fix:
+
+```bash
+git remote set-url origin git@github.com:<OWNER>/<REPO>.git
+```
+
+### “Author identity unknown” when committing
+- Fix (repo-local):
+
+```bash
+git config user.name "Your Name"
+git config user.email "you@example.com"
+```
+
+### `Permission denied (publickey)`
+- Cause: deploy key not installed, not write-enabled in GitHub, or SSH config not pointing to it.
+- Fix:
+  - Re-check GitHub Deploy Key exists for `<OWNER>/<REPO>` and has write access enabled.
+  - Re-check `~/.ssh/config` in Replit points `github.com` to the deploy key.
+  - Re-test: `ssh -T git@github.com`
+
+### `Host key verification failed`
+- Fix:
+
+```bash
+ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+chmod 600 ~/.ssh/known_hosts
+```
+
+---
+
+## Copy/Paste Brief (New Project Setup)
+
+- SSH into the Replit project and `cd /home/runner/workspace`.
+- Ensure `origin` is SSH: `git@github.com:<OWNER>/<REPO>.git`.
+- Install a GitHub deploy key (write access) so pushes work from SSH.
+- Add `verify` / `verify:quick` scripts and run them once in Replit.
+- Document a `## Handoff Checklist` in `replit.md`.
+- Only push meaningful chunks (don't auto-commit every edit).
