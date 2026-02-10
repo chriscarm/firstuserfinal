@@ -570,7 +570,7 @@ export async function registerRoutes(
 
         const cleanPhone = user.phone?.replace(/\D/g, "") || "";
         // Check against env variable for founder phones (comma-separated list)
-        const founderPhones = (process.env.FOUNDER_PHONES || "3477444249,13477444249").split(",").map(p => p.trim());
+        const founderPhones = (process.env.FOUNDER_PHONES || "").split(",").map(p => p.trim()).filter(Boolean);
         const isFounderPhone = founderPhones.some(p => cleanPhone === p || cleanPhone === p.replace(/\D/g, ""));
 
         // Mark phone as verified
@@ -682,7 +682,7 @@ export async function registerRoutes(
       if (result.success && result.isValidOtp) {
         const cleanPhone = phone.replace(/\D/g, "");
         // Check against env variable for founder phones (comma-separated list)
-        const founderPhones = (process.env.FOUNDER_PHONES || "3477444249,13477444249").split(",").map(p => p.trim());
+        const founderPhones = (process.env.FOUNDER_PHONES || "").split(",").map(p => p.trim()).filter(Boolean);
         const isFounderPhone = founderPhones.some(p => cleanPhone === p || cleanPhone === p.replace(/\D/g, ""));
 
         await storage.verifyUserPhone(userId, isFounderPhone);
