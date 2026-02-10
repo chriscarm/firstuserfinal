@@ -83,3 +83,32 @@ shared/             # Shared types and schemas
 - **Vite**: Frontend build tool with React plugin
 - **Replit Plugins**: Dev banner, cartographer, runtime error overlay
 - **TypeScript**: Full type coverage across frontend and backend
+
+## Handoff Checklist
+
+Use this checklist whenever an agent starts or finishes work in this Replit workspace.
+
+### 1) Confirm GitHub Push Will Work From SSH
+- Run `git remote -v`
+- `origin` must be SSH (example: `git@github.com:chriscarm/firstuser-launch-ready.git`)
+
+### 2) Confirm Branch + Working Tree
+- Run `git status -sb`
+- Make sure you are on the intended branch and the working tree is clean before starting a new chunk.
+
+### 3) Run Checks
+- Iterating fast: `npm run verify:quick`
+- Before pushing to `main`: `npm run verify`
+
+### 4) Restart + 60-Second Smoke Test
+After pushing a meaningful change to `main`, restart the Replit app and sanity check:
+- Logged out: click **Community Chat** from the FirstUser landing page
+- Logged out: visit `/space/firstuser/community` and confirm the read-only preview works
+
+### 5) Commit + Push (From SSH)
+- `git add -A`
+- `git commit -m "..."` (one meaningful chunk)
+- `git push origin <branch>`
+
+### Troubleshooting
+If `git push` ever prompts for username/password, stop. `origin` is probably HTTPS or the SSH key is not configured in this workspace.

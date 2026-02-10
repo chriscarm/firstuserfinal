@@ -9,6 +9,8 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "verify": "npm run check && npm run build",
+    "verify:quick": "npm run check",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
