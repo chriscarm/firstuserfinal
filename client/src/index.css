@@ -278,6 +278,7 @@
   .laser-wrapper::before {
     content: '';
     position: absolute;
+    pointer-events: none;
     inset: 0;
     border-radius: 12px;
     padding: 1px;
