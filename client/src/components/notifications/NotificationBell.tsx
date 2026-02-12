@@ -67,22 +67,48 @@ function NotificationItem({ notification, onClick }: NotificationItemProps) {
   );
 }
 
-export function NotificationBell() {
+interface NotificationBellProps {
+  triggerClassName?: string;
+  iconClassName?: string;
+  badgeClassName?: string;
+  active?: boolean;
+}
+
+export function NotificationBell({
+  triggerClassName,
+  iconClassName,
+  badgeClassName,
+  active = false,
+}: NotificationBellProps = {}) {
   const [open, setOpen] = useState(false);
   const { notifications, unreadCount, loading, markAllAsRead } = useNotifications();
+  const isEmphasized = active || open || unreadCount > 0;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
-          className="relative flex items-center justify-center h-11 w-11 rounded-lg hover:bg-white/[0.04] transition-all duration-200"
+          className={
+            triggerClassName ??
+            "group relative flex h-11 w-11 items-center justify-center rounded-lg border border-transparent transition-all duration-200 hover:bg-white/[0.05] hover:border-white/[0.1]"
+          }
           data-testid="notification-bell"
         >
-          <Bell className={`h-5 w-5 transition-colors ${
-            unreadCount > 0 ? "text-white/90" : "text-white/25 hover:text-white/50"
-          }`} />
+          <Bell
+            className={
+              iconClassName ??
+              `h-5 w-5 transition-colors ${
+                isEmphasized ? "text-white/90" : "text-white/35 group-hover:text-white/70"
+              }`
+            }
+          />
           {unreadCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+            <span
+              className={
+                badgeClassName ??
+                "absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center"
+              }
+            >
               {unreadCount > 99 ? "99+" : unreadCount}
             </span>
           )}

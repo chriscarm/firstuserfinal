@@ -49,6 +49,18 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
   const { viewMode, setViewMode, activeCommunityId, setActiveCommunityId } = useLayout();
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const isMessagesActive = location.startsWith("/messages") || viewMode === "messages";
+  const isDiscoverActive = location.startsWith("/explore") || viewMode === "discover";
+  const isSettingsActive = location.startsWith("/settings");
+  const isProfileActive = location.startsWith("/profile");
+
+  const railSlotBase =
+    "group relative mx-2 flex h-11 w-11 items-center justify-center rounded-xl border border-transparent transition-all duration-200";
+  const railSlotState = (isActive: boolean) =>
+    isActive
+      ? "bg-white/[0.1] border-white/[0.14] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.02)]"
+      : "hover:bg-white/[0.05] hover:border-white/[0.1]";
+  const railIconState = (isActive: boolean) =>
+    isActive ? "text-white/90" : "text-white/35 group-hover:text-white/70";
 
   const handleMailClick = () => {
     setViewMode("messages");
@@ -72,25 +84,22 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
       data-testid="nav-rail"
     >
       {/* Top Section: Mail (DMs) and Notifications */}
-      <div className="h-14 flex items-center justify-center gap-1 border-b border-white/[0.08]">
+      <div className="border-b border-white/[0.08] py-2 space-y-2">
         <button
           onClick={handleMailClick}
-          className={`relative flex items-center justify-center h-11 w-11 rounded-lg cursor-pointer transition-all duration-200 ${
-            isMessagesActive
-              ? "bg-white/[0.08]"
-              : "hover:bg-white/[0.04]"
-          }`}
+          className={`${railSlotBase} ${railSlotState(isMessagesActive)}`}
           data-testid="nav-rail-mail"
+          title="Messages"
         >
-          <Mail className={`h-5 w-5 transition-colors ${
-            isMessagesActive ? "text-white/90" : "text-white/25 hover:text-white/50"
-          }`} />
+          <Mail className={`h-5 w-5 transition-colors ${railIconState(isMessagesActive)}`} />
         </button>
-      </div>
-
-      {/* Notifications */}
-      <div className="flex items-center justify-center py-2">
-        <NotificationBell />
+        <div className="flex items-center justify-center">
+          <NotificationBell
+            triggerClassName={`${railSlotBase} ${railSlotState(false)}`}
+            iconClassName={`h-5 w-5 transition-colors ${railIconState(false)}`}
+            badgeClassName="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center"
+          />
+        </div>
       </div>
 
       {/* Communities Section */}
@@ -99,13 +108,13 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
         {draftCommunity && (
           <div className="relative mx-2">
             <div
-              className="relative flex items-center justify-center h-11 rounded-lg bg-white/[0.08] cursor-default"
+              className="relative flex items-center justify-center h-11 w-11 rounded-xl bg-white/[0.1] border border-white/[0.14] cursor-default"
               data-testid="nav-rail-draft-community"
               title={draftCommunity.name || "New Community"}
             >
               {/* Active indicator - rainbow gradient with pulse */}
               <div
-                className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 rounded-r-full animate-pulse"
+                className="absolute left-[-2px] top-1/2 -translate-y-1/2 w-1 h-5 rounded-full animate-pulse"
                 style={{
                   background: "linear-gradient(180deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%)"
                 }}
@@ -139,18 +148,14 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
             <button
               key={community.id}
               onClick={() => handleCommunityClick(community)}
-              className={`relative flex items-center justify-center h-11 mx-2 rounded-lg cursor-pointer transition-all duration-200 hover-border-brighten ${
-                isActive
-                  ? "bg-white/[0.08]"
-                  : "hover:bg-white/[0.04]"
-              }`}
+              className={`${railSlotBase} ${railSlotState(isActive)} hover-border-brighten`}
               data-testid={`nav-rail-community-${community.slug}`}
               title={community.name}
             >
               {/* Active indicator - rainbow gradient */}
               {isActive && (
                 <div
-                  className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 rounded-r-full"
+                  className="absolute left-[-2px] top-1/2 -translate-y-1/2 w-1 h-5 rounded-full"
                   style={{
                     background: "linear-gradient(180deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%)"
                   }}
@@ -182,17 +187,11 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
         {/* Discover Button */}
         <button
           onClick={handleDiscoverClick}
-          className={`flex items-center justify-center h-11 mx-2 rounded-lg cursor-pointer transition-all duration-200 ${
-            viewMode === "discover"
-              ? "bg-white/[0.08]"
-              : "hover:bg-white/[0.04]"
-          }`}
+          className={`${railSlotBase} ${railSlotState(isDiscoverActive)}`}
           data-testid="nav-rail-discover"
           title="Discover communities"
         >
-          <Compass className={`h-5 w-5 transition-colors ${
-            viewMode === "discover" ? "text-white/90" : "text-white/25 hover:text-white/50"
-          }`} />
+          <Compass className={`h-5 w-5 transition-colors ${railIconState(isDiscoverActive)}`} />
         </button>
 
         {/* Separator */}
@@ -201,55 +200,59 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
         {/* Create New Community */}
         <Link href="/create">
           <div
-            className="flex items-center justify-center h-11 mx-2 rounded-lg border border-dashed border-white/[0.15] hover:border-white/[0.25] hover:bg-white/[0.04] cursor-pointer transition-all duration-200"
+            className="group flex items-center justify-center h-11 w-11 mx-2 rounded-xl border border-dashed border-white/[0.18] hover:border-white/[0.3] hover:bg-white/[0.05] cursor-pointer transition-all duration-200"
             data-testid="nav-rail-create"
             title="Create a new community"
           >
-            <Plus className="h-5 w-5 text-white/25 hover:text-white/50 transition-colors" />
+            <Plus className="h-5 w-5 text-white/35 group-hover:text-white/70 transition-colors" />
           </div>
         </Link>
       </div>
 
       {/* Bottom Section: Settings and Profile */}
-      <div className="py-3 space-y-2">
+      <div className="py-3 space-y-2 border-t border-white/[0.08]">
         {/* Admin Ideas Panel - Only visible to FirstUser founder */}
         {user?.hasFounderAccess && (
           <button
             onClick={() => setShowAdminPanel(true)}
-            className="flex items-center justify-center h-11 mx-2 rounded-lg hover:bg-amber-500/10 cursor-pointer transition-all duration-200"
+            className={`${railSlotBase} hover:bg-amber-500/10 hover:border-amber-500/25`}
             data-testid="nav-rail-admin"
             title="Admin: Ideas Backlog"
           >
-            <Lightbulb className="h-5 w-5 text-amber-400/50 hover:text-amber-400 transition-colors" />
+            <Lightbulb className="h-5 w-5 text-amber-400/60 group-hover:text-amber-300 transition-colors" />
           </button>
         )}
 
         {/* Settings */}
         <Link href="/settings">
           <div
-            className="flex items-center justify-center h-11 mx-2 rounded-lg hover:bg-white/[0.04] cursor-pointer transition-all duration-200"
+            className={`${railSlotBase} ${railSlotState(isSettingsActive)}`}
             data-testid="nav-rail-settings"
+            title="Settings"
           >
-            <Settings className="h-5 w-5 text-white/25 hover:text-white/50 transition-colors" />
+            <Settings className={`h-5 w-5 transition-colors ${railIconState(isSettingsActive)}`} />
           </div>
         </Link>
 
         {/* User Avatar / Profile */}
-        <div className="flex items-center justify-center pt-2">
+        <div className="flex items-center justify-center">
           <Link href="/profile">
             <div
-              className="h-9 w-9 rounded-full cursor-pointer hover:ring-2 hover:ring-white/20 transition-all duration-200 bg-gradient-to-br from-amber-500/20 via-pink-500/20 to-violet-500/20 border border-white/[0.08] flex items-center justify-center overflow-hidden"
+              className={`${railSlotBase} ${railSlotState(isProfileActive)}`}
               data-testid="nav-rail-profile"
+              title="Profile"
             >
-              {user?.avatarUrl ? (
-                <img
-                  src={user.avatarUrl}
-                  alt={user?.username || "User"}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <User className="h-5 w-5 text-white/50" />
-              )}
+              <div className="h-9 w-9 rounded-full bg-gradient-to-br from-amber-500/20 via-pink-500/20 to-violet-500/20 border border-white/[0.1] flex items-center justify-center overflow-hidden">
+                {user?.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt={user?.username || "User"}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <User className={`h-5 w-5 transition-colors ${railIconState(isProfileActive)}`} />
+                )}
+              </div>
             </div>
           </Link>
         </div>
