@@ -11,6 +11,7 @@ import crypto from "crypto";
 import sharp from "sharp";
 import { sendVerificationEmail } from "./email";
 import { emitNotificationToUser } from "./websocket";
+import { getHomepageOwnerPhone, getHomepageSlug, isHomepageOwnerUser, isHomepageSlug } from "./homepageOwnership";
 // TextBelt SMS configuration
 const TEXTBELT_API_KEY = process.env.TEXTBELT_API_KEY || "textbelt";
 
@@ -142,6 +143,40 @@ async function requireFounder(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+async function hasFounderManagementAccess(userId: string, appSpace: { slug: string; founderId: string }) {
+  const user = await storage.getUser(userId);
+  if (!user) {
+    return false;
+  }
+
+  if (isHomepageSlug(appSpace.slug) && getHomepageOwnerPhone()) {
+    return appSpace.founderId === userId && isHomepageOwnerUser(user);
+  }
+
+  return appSpace.founderId === userId || !!user.hasFounderAccess;
+}
+
+async function ensureFounderManagementAccess(options: {
+  req: Request;
+  res: Response;
+  appSpace: { slug: string; founderId: string };
+  message: string;
+}) {
+  const userId = getUserId(options.req);
+  if (!userId) {
+    options.res.status(401).json({ message: "Not authenticated" });
+    return false;
+  }
+
+  const allowed = await hasFounderManagementAccess(userId, options.appSpace);
+  if (!allowed) {
+    options.res.status(403).json({ message: options.message });
+    return false;
+  }
+
+  return true;
+}
+
 // Factory: Require user to be a member of an appspace (any status)
 function requireMember(appSpaceIdParam: string = "id") {
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -200,8 +235,8 @@ function requireAppSpaceFounder(appSpaceIdParam: string = "id") {
     if (!appSpace) {
       return res.status(404).json({ message: "AppSpace not found" });
     }
-    const user = await storage.getUser(userId);
-    if (appSpace.founderId !== userId && !user?.hasFounderAccess) {
+    const canManage = await hasFounderManagementAccess(userId, appSpace);
+    if (!canManage) {
       return res.status(403).json({ message: "Founder access required for this appspace" });
     }
     (req as any).appSpace = appSpace;
@@ -239,7 +274,7 @@ export async function registerRoutes(
   });
 
   // Founder: Update AppSpace content
-  app.patch("/api/founder/appspaces/:slug", requireFounder, async (req, res) => {
+  app.patch("/api/founder/appspaces/:slug", requireAuth, async (req, res) => {
     try {
       const slug = req.params.slug as string;
       const updates = req.body;
@@ -249,11 +284,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
 
-      // Check if user is the founder of this appspace or has founder access
-      const user = await storage.getUser(req.session.userId!);
-      if (appSpace.founderId !== req.session.userId && !user?.hasFounderAccess) {
-        return res.status(403).json({ message: "Not authorized to edit this appspace" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to edit this appspace",
+      });
+      if (!canManage) return;
 
       const updatedAppSpace = await storage.updateAppSpace(appSpace.id, updates);
       return res.json(updatedAppSpace);
@@ -281,24 +318,42 @@ export async function registerRoutes(
   });
 
   // Founder: Award badge to user
-  app.post("/api/founder/users/:userId/award-badge", requireFounder, async (req, res) => {
+  app.post("/api/founder/users/:userId/award-badge", requireAuth, async (req, res) => {
     try {
       const userId = req.params.userId as string;
       const { badgeTier, appSpaceId } = req.body;
+      const parsedAppSpaceId = Number(appSpaceId);
 
       const user = await storage.getUser(userId);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
 
+      if (!Number.isInteger(parsedAppSpaceId)) {
+        return res.status(400).json({ message: "Valid appSpaceId is required" });
+      }
+
+      const appSpace = await storage.getAppSpace(parsedAppSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to award badges for this appspace",
+      });
+      if (!canManage) return;
+
       // Check if user is already a member
-      let member = await storage.getWaitlistMember(appSpaceId, userId);
+      let member = await storage.getWaitlistMember(parsedAppSpaceId, userId);
 
       if (!member) {
         // Add user to waitlist with the specified badge tier
-        const position = await storage.getNextPosition(appSpaceId);
+        const position = await storage.getNextPosition(parsedAppSpaceId);
         member = await storage.joinWaitlist({
-          appSpaceId,
+          appSpaceId: parsedAppSpaceId,
           userId,
           position,
           badgeTier: badgeTier || getBadgeTier(position),
@@ -306,7 +361,7 @@ export async function registerRoutes(
         });
       } else {
         // Update badge tier
-        member = await storage.updateWaitlistMemberBadge(appSpaceId, userId, badgeTier);
+        member = await storage.updateWaitlistMemberBadge(parsedAppSpaceId, userId, badgeTier);
       }
 
       return res.json({ success: true, member });
@@ -575,6 +630,17 @@ export async function registerRoutes(
 
         // Mark phone as verified
         await storage.verifyUserPhone(pendingUserId, isFounderPhone);
+        const updatedUser = await storage.getUser(pendingUserId);
+        if (!updatedUser) {
+          return res.status(400).json({ message: "User not found" });
+        }
+
+        if (isHomepageOwnerUser(updatedUser)) {
+          const transferred = await storage.transferAppSpaceFounderBySlug(getHomepageSlug(), pendingUserId);
+          if (transferred) {
+            console.log(`[HomepageOwnership] Homepage ownership transferred to user ${pendingUserId}.`);
+          }
+        }
 
         // Establish full session
         req.session.userId = pendingUserId;
@@ -588,8 +654,6 @@ export async function registerRoutes(
             else resolve();
           });
         });
-
-        const updatedUser = await storage.getUser(pendingUserId);
 
         return res.json({
           success: true,
@@ -688,6 +752,12 @@ export async function registerRoutes(
         await storage.verifyUserPhone(userId, isFounderPhone);
 
         const user = await storage.getUser(userId);
+        if (isHomepageOwnerUser(user)) {
+          const transferred = await storage.transferAppSpaceFounderBySlug(getHomepageSlug(), userId);
+          if (transferred) {
+            console.log(`[HomepageOwnership] Homepage ownership transferred to user ${userId}.`);
+          }
+        }
 
         return res.json({
           success: true,
@@ -1135,10 +1205,19 @@ export async function registerRoutes(
 
   app.post("/api/appspaces", requireAuth, async (req, res) => {
     try {
+      const currentUser = await storage.getUser(req.session.userId!);
+      if (!currentUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
       const data = insertAppSpaceSchema.parse({
         ...req.body,
         founderId: req.session.userId
       });
+
+      if (isHomepageSlug(data.slug) && getHomepageOwnerPhone() && !isHomepageOwnerUser(currentUser)) {
+        return res.status(403).json({ message: "Only the homepage owner account can create this AppSpace" });
+      }
       
       const existingSlug = await storage.getAppSpaceBySlug(data.slug);
       if (existingSlug) {
@@ -1386,10 +1465,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
       
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Not authorized to manage members" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to manage members",
+      });
+      if (!canManage) return;
       
       const existingMember = await storage.getWaitlistMember(appSpaceId, targetUserId);
       if (!existingMember) {
@@ -1474,10 +1556,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
       
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Not authorized to manage members" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to manage members",
+      });
+      if (!canManage) return;
       
       const results: Array<{ userId: string; success: boolean; error?: string }> = [];
       
@@ -1556,10 +1641,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
       
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Not authorized to view members" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to view members",
+      });
+      if (!canManage) return;
       
       const members = await storage.getWaitlistMembersWithUsers(appSpaceId);
       return res.json({ members });
@@ -1605,10 +1693,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
       
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Only founders can create announcements" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Only founders can create announcements",
+      });
+      if (!canManage) return;
       
       const announcement = await storage.createAnnouncement({
         appSpaceId,
@@ -1653,10 +1744,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
       
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Only founders can delete announcements" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Only founders can delete announcements",
+      });
+      if (!canManage) return;
       
       const deleted = await storage.deleteAnnouncement(announcementId, appSpaceId);
       if (!deleted) {
@@ -1707,10 +1801,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
       
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Only founders can create polls" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Only founders can create polls",
+      });
+      if (!canManage) return;
       
       const durationMs: Record<string, number> = {
         "1h": 60 * 60 * 1000,
@@ -1845,10 +1942,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
       
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Only founders can award badges" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Only founders can award badges",
+      });
+      if (!canManage) return;
       
       const member = await storage.getWaitlistMember(appSpaceId, userId);
       if (!member) {
@@ -2004,10 +2104,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
 
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Not authorized" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized",
+      });
+      if (!canManage) return;
 
       const ticket = await storage.getOrCreateGoldenTicket(appSpaceId);
       const tiers = await storage.getTicketTiers(ticket.id);
@@ -2055,10 +2158,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
 
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Not authorized" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized",
+      });
+      if (!canManage) return;
 
       const ticket = await storage.updateGoldenTicketPolicy(appSpaceId, parsed.data);
       await storage.createTicketAuditEvent({
@@ -2092,10 +2198,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
 
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Not authorized" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized",
+      });
+      if (!canManage) return;
 
       const ticket = await storage.getOrCreateGoldenTicket(appSpaceId);
       const existingTiers = await storage.getTicketTiers(ticket.id);
@@ -2165,10 +2274,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
 
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Not authorized" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized",
+      });
+      if (!canManage) return;
 
       const ticket = await storage.getOrCreateGoldenTicket(appSpaceId);
       if (ticket.winnerUserId || ticket.status === "selected") {
@@ -2272,10 +2384,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
 
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Not authorized" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized",
+      });
+      if (!canManage) return;
 
       const audits = await storage.getTicketAuditEvents(appSpaceId);
       const policyEvents = await storage.getTicketPolicyEvents(appSpaceId);
@@ -2349,10 +2464,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
       
-      const currentUser = await storage.getUser(req.session.userId!);
-      if (!currentUser?.hasFounderAccess && appSpace.founderId !== req.session.userId) {
-        return res.status(403).json({ message: "Not authorized" });
-      }
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized",
+      });
+      if (!canManage) return;
       
       const announcementsList = await storage.getAnnouncements(appSpaceId);
       const pollsList = await storage.getPolls(appSpaceId);

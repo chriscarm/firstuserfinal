@@ -10,6 +10,7 @@ Use this as the single go-live gate for the launch-ready branch.
 - [ ] `EMAIL_FROM` configured
 - [ ] `VITE_HOMEPAGE_SPACE_SLUG` configured (or default `firstuser`)
 - [ ] `FOUNDER_PHONES` configured for bootstrap founder verification
+- [ ] `HOMEPAGE_OWNER_PHONE` configured (`13477444249`) for homepage ownership lock and auto-transfer
 
 ## 2. Data and Schema
 - [ ] Run `npm run db:push` in target environment

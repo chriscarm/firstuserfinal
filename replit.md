@@ -103,6 +103,7 @@ shared/             # Shared types and schemas
 - **Textbelt**: SMS delivery for phone verification codes (`TEXTBELT_API_KEY` secret, used in `server/sms.ts` and `server/routes.ts`)
 - **EMAIL_FROM**: Optional env var to set sender address (defaults to `FirstUser <noreply@firstuser.app>`)
 - **FOUNDER_PHONES**: Optional env var (Replit Secret) with comma-separated phone numbers that should be granted platform-level founder access (`hasFounderAccess`) on phone verification. This does not determine who owns an AppSpace; AppSpace ownership is `app_spaces.founder_id` (the user who created that community).
+- **HOMEPAGE_OWNER_PHONE**: Optional env var for homepage ownership lock (recommended: `13477444249`). When set, only this verified phone account can create/manage the homepage slug and phone verification auto-transfers homepage ownership to that account.
 
 ### Development Tools
 - **Vite**: Frontend build tool with React plugin

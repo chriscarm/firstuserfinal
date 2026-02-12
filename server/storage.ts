@@ -100,6 +100,7 @@ export interface IStorage {
   getAppSpaceBySlug(slug: string): Promise<AppSpace | undefined>;
   getAllAppSpaces(): Promise<AppSpace[]>;
   createAppSpace(appSpace: InsertAppSpace): Promise<AppSpace>;
+  transferAppSpaceFounderBySlug(slug: string, newFounderId: string): Promise<AppSpace | undefined>;
   
   getWaitlistMember(appSpaceId: number, userId: string): Promise<WaitlistMember | undefined>;
   getWaitlistMembers(appSpaceId: number): Promise<WaitlistMember[]>;
@@ -237,6 +238,23 @@ export class DbStorage implements IStorage {
 
   async createAppSpace(insertAppSpace: InsertAppSpace): Promise<AppSpace> {
     const result = await db.insert(appSpaces).values(insertAppSpace).returning();
+    return result[0];
+  }
+
+  async transferAppSpaceFounderBySlug(slug: string, newFounderId: string): Promise<AppSpace | undefined> {
+    const existing = await this.getAppSpaceBySlug(slug);
+    if (!existing) {
+      return undefined;
+    }
+
+    if (existing.founderId === newFounderId) {
+      return existing;
+    }
+
+    const result = await db.update(appSpaces)
+      .set({ founderId: newFounderId })
+      .where(eq(appSpaces.id, existing.id))
+      .returning();
     return result[0];
   }
 
