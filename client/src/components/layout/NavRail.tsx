@@ -2,11 +2,11 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
 import {
+  Home,
   Mail,
   Compass,
   Plus,
   User,
-  Settings,
   Lightbulb,
 } from "lucide-react";
 import { useLayout } from "@/contexts/LayoutContext";
@@ -48,10 +48,10 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
   const [location, setLocation] = useLocation();
   const { viewMode, setViewMode, activeCommunityId, setActiveCommunityId } = useLayout();
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const isDashboardActive = location.startsWith("/dashboard");
   const isMessagesActive = location.startsWith("/messages") || viewMode === "messages";
   const isDiscoverActive = location.startsWith("/explore") || viewMode === "discover";
-  const isSettingsActive = location.startsWith("/settings");
-  const isProfileActive = location.startsWith("/profile");
+  const isAccountActive = location.startsWith("/settings") || location.startsWith("/profile");
 
   const railSlotBase =
     "group relative mx-2 flex h-11 w-11 items-center justify-center rounded-xl border border-transparent transition-all duration-200";
@@ -62,6 +62,11 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
   const railIconState = (isActive: boolean) =>
     isActive ? "text-white/90" : "text-white/35 group-hover:text-white/70";
 
+  const handleDashboardClick = () => {
+    setViewMode("discover");
+    setLocation("/dashboard");
+  };
+
   const handleMailClick = () => {
     setViewMode("messages");
     setLocation("/messages");
@@ -70,6 +75,10 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
   const handleDiscoverClick = () => {
     setViewMode("discover");
     setLocation("/explore");
+  };
+
+  const handleAccountClick = () => {
+    setLocation("/settings");
   };
 
   const handleCommunityClick = (community: Community) => {
@@ -83,16 +92,8 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
       className="hidden md:flex flex-col w-[60px] bg-black border-r border-white/[0.08] z-20"
       data-testid="nav-rail"
     >
-      {/* Top Section: Mail (DMs) and Notifications */}
-      <div className="border-b border-white/[0.08] py-2 space-y-2">
-        <button
-          onClick={handleMailClick}
-          className={`${railSlotBase} ${railSlotState(isMessagesActive)}`}
-          data-testid="nav-rail-mail"
-          title="Messages"
-        >
-          <Mail className={`h-5 w-5 transition-colors ${railIconState(isMessagesActive)}`} />
-        </button>
+      {/* Top Section: Notifications */}
+      <div className="border-b border-white/[0.08] py-2">
         <div className="flex items-center justify-center">
           <NotificationBell
             triggerClassName={`${railSlotBase} ${railSlotState(false)}`}
@@ -104,6 +105,16 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
 
       {/* Communities Section */}
       <div className="flex-1 py-3 space-y-2 overflow-y-auto">
+        {/* Dashboard */}
+        <button
+          onClick={handleDashboardClick}
+          className={`${railSlotBase} ${railSlotState(isDashboardActive)}`}
+          data-testid="nav-rail-dashboard"
+          title="Dashboard"
+        >
+          <Home className={`h-5 w-5 transition-colors ${railIconState(isDashboardActive)}`} />
+        </button>
+
         {/* Draft Community Preview (for CreateSpace wizard) */}
         {draftCommunity && (
           <div className="relative mx-2">
@@ -194,22 +205,9 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
           <Compass className={`h-5 w-5 transition-colors ${railIconState(isDiscoverActive)}`} />
         </button>
 
-        {/* Separator */}
-        <div className="mx-4 h-px bg-white/[0.08]" />
-
-        {/* Create New Community */}
-        <Link href="/create">
-          <div
-            className="group flex items-center justify-center h-11 w-11 mx-2 rounded-xl border border-dashed border-white/[0.18] hover:border-white/[0.3] hover:bg-white/[0.05] cursor-pointer transition-all duration-200"
-            data-testid="nav-rail-create"
-            title="Create a new community"
-          >
-            <Plus className="h-5 w-5 text-white/35 group-hover:text-white/70 transition-colors" />
-          </div>
-        </Link>
       </div>
 
-      {/* Bottom Section: Settings and Profile */}
+      {/* Bottom Section: Utility Actions */}
       <div className="py-3 space-y-2 border-t border-white/[0.08]">
         {/* Admin Ideas Panel - Only visible to FirstUser founder */}
         {user?.hasFounderAccess && (
@@ -223,39 +221,46 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
           </button>
         )}
 
-        {/* Settings */}
-        <Link href="/settings">
+        {/* Create New Community */}
+        <Link href="/create">
           <div
-            className={`${railSlotBase} ${railSlotState(isSettingsActive)}`}
-            data-testid="nav-rail-settings"
-            title="Settings"
+            className="group flex items-center justify-center h-11 w-11 mx-2 rounded-xl border border-dashed border-white/[0.18] hover:border-white/[0.3] hover:bg-white/[0.05] cursor-pointer transition-all duration-200"
+            data-testid="nav-rail-create"
+            title="Create a new community"
           >
-            <Settings className={`h-5 w-5 transition-colors ${railIconState(isSettingsActive)}`} />
+            <Plus className="h-5 w-5 text-white/35 group-hover:text-white/70 transition-colors" />
           </div>
         </Link>
 
-        {/* User Avatar / Profile */}
-        <div className="flex items-center justify-center">
-          <Link href="/profile">
-            <div
-              className={`${railSlotBase} ${railSlotState(isProfileActive)}`}
-              data-testid="nav-rail-profile"
-              title="Profile"
-            >
-              <div className="h-9 w-9 rounded-full bg-gradient-to-br from-amber-500/20 via-pink-500/20 to-violet-500/20 border border-white/[0.1] flex items-center justify-center overflow-hidden">
-                {user?.avatarUrl ? (
-                  <img
-                    src={user.avatarUrl}
-                    alt={user?.username || "User"}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <User className={`h-5 w-5 transition-colors ${railIconState(isProfileActive)}`} />
-                )}
-              </div>
-            </div>
-          </Link>
-        </div>
+        {/* Messages */}
+        <button
+          onClick={handleMailClick}
+          className={`${railSlotBase} ${railSlotState(isMessagesActive)}`}
+          data-testid="nav-rail-mail"
+          title="Messages"
+        >
+          <Mail className={`h-5 w-5 transition-colors ${railIconState(isMessagesActive)}`} />
+        </button>
+
+        {/* Account (Settings + Profile) */}
+        <button
+          onClick={handleAccountClick}
+          className={`${railSlotBase} ${railSlotState(isAccountActive)}`}
+          data-testid="nav-rail-account"
+          title="Account settings"
+        >
+          <div className="h-9 w-9 rounded-full bg-gradient-to-br from-amber-500/20 via-pink-500/20 to-violet-500/20 border border-white/[0.1] flex items-center justify-center overflow-hidden">
+            {user?.avatarUrl ? (
+              <img
+                src={user.avatarUrl}
+                alt={user?.username || "User"}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <User className={`h-5 w-5 transition-colors ${railIconState(isAccountActive)}`} />
+            )}
+          </div>
+        </button>
       </div>
 
       {/* Admin Ideas Panel */}

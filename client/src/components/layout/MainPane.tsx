@@ -1,8 +1,6 @@
 import { ReactNode } from "react";
-import { Menu, User, Compass, Mail, Settings } from "lucide-react";
-import { useAuth } from "@/lib/auth";
+import { Menu } from "lucide-react";
 import { useLayout } from "@/contexts/LayoutContext";
-import { useLocation } from "wouter";
 
 interface MainPaneProps {
   // Header configuration
@@ -26,22 +24,7 @@ export function MainPane({
   children,
   noPadding = false,
 }: MainPaneProps) {
-  const { user } = useAuth();
-  const [location, setLocation] = useLocation();
-  const { toggleMobileSidebar, setViewMode } = useLayout();
-  const isMessagesActive = location.startsWith("/messages");
-  const isDiscoverActive = location.startsWith("/explore");
-  const isSettingsActive = location.startsWith("/settings");
-
-  const goToMessages = () => {
-    setViewMode("messages");
-    setLocation("/messages");
-  };
-
-  const goToDiscover = () => {
-    setViewMode("discover");
-    setLocation("/explore");
-  };
+  const { toggleMobileSidebar } = useLayout();
 
   return (
     <main className="flex-1 flex flex-col z-10 overflow-hidden bg-[#0a0a0a]">
@@ -57,56 +40,7 @@ export function MainPane({
         <span className="min-w-0 px-2 font-display font-bold text-white/90 truncate">
           {mobileTitle || "Dashboard"}
         </span>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={goToDiscover}
-            className={`h-9 w-9 flex items-center justify-center rounded-lg border transition-all duration-200 ${
-              isDiscoverActive
-                ? "bg-white/[0.1] border-white/[0.15]"
-                : "bg-transparent border-transparent hover:bg-white/[0.05] hover:border-white/[0.1]"
-            }`}
-            aria-label="Discover"
-          >
-            <Compass className={`h-4 w-4 ${isDiscoverActive ? "text-white/90" : "text-white/45"}`} />
-          </button>
-          <button
-            onClick={goToMessages}
-            className={`h-9 w-9 flex items-center justify-center rounded-lg border transition-all duration-200 ${
-              isMessagesActive
-                ? "bg-white/[0.1] border-white/[0.15]"
-                : "bg-transparent border-transparent hover:bg-white/[0.05] hover:border-white/[0.1]"
-            }`}
-            aria-label="Messages"
-          >
-            <Mail className={`h-4 w-4 ${isMessagesActive ? "text-white/90" : "text-white/45"}`} />
-          </button>
-          <button
-            onClick={() => setLocation("/settings")}
-            className={`h-9 w-9 flex items-center justify-center rounded-lg border transition-all duration-200 ${
-              isSettingsActive
-                ? "bg-white/[0.1] border-white/[0.15]"
-                : "bg-transparent border-transparent hover:bg-white/[0.05] hover:border-white/[0.1]"
-            }`}
-            aria-label="Settings"
-          >
-            <Settings className={`h-4 w-4 ${isSettingsActive ? "text-white/90" : "text-white/45"}`} />
-          </button>
-          <button
-            onClick={() => setLocation("/profile")}
-            className="h-9 w-9 rounded-full bg-gradient-to-br from-amber-500/20 via-pink-500/20 to-violet-500/20 border border-white/[0.08] flex items-center justify-center overflow-hidden"
-            aria-label="Profile"
-          >
-            {user?.avatarUrl ? (
-              <img
-                src={user.avatarUrl}
-                alt={user?.username || "User"}
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <User className="h-4 w-4 text-white/50" />
-            )}
-          </button>
-        </div>
+        <div className="h-11 w-11" />
       </header>
 
       {/* Desktop Header */}

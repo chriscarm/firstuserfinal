@@ -6,13 +6,11 @@ import { useChat, MessageSearch } from "@/components/chat";
 import { useAccessLevel } from "@/hooks/useAccessLevel";
 import { useUserCommunities } from "@/hooks/useUserCommunities";
 import { useLayout } from "@/contexts/LayoutContext";
-import { DMProvider, DMChat, useDM } from "@/components/dm";
 import { AppLayout, ContextPanel, MainPane, SectionHeader, HeaderTitle } from "@/components/layout";
 import { MemberListPanel } from "@/components/MemberListPanel";
 import { SurveyResponseModal } from "@/components/SurveyResponseModal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Hash,
   Clock,
@@ -293,7 +291,7 @@ function getStatusFromAccessLevel(level: string, isFounder: boolean): "owner" | 
   return null;
 }
 
-// Inner content component that has access to DM context
+// Inner content component for a single community page
 function SpaceCommunityContent() {
   const params = useParams<{ slug: string }>();
   const slug = params.slug;
@@ -301,11 +299,7 @@ function SpaceCommunityContent() {
   const { user, openPhoneAuthModal } = useAuth();
   const queryClient = useQueryClient();
   const [selectedChannel, setSelectedChannel] = useState<RealChannel | null>(null);
-  const [isJoining, setIsJoining] = useState(false);
-  const [showDMView, setShowDMView] = useState(false);
-  const [showLockedMessage, setShowLockedMessage] = useState(false);
   const [showSurveyModal, setShowSurveyModal] = useState(false);
-  const [surveyCompleted, setSurveyCompleted] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
 
   // Get unread counts from chat context
@@ -314,9 +308,6 @@ function SpaceCommunityContent() {
   // Use layout context
   const { setViewMode, setActiveCommunityId } = useLayout();
   const { communities } = useUserCommunities();
-
-  // Use DM context
-  const { currentConversation, selectConversation, founder } = useDM();
 
   // Fetch app space data
   const {
@@ -355,7 +346,7 @@ function SpaceCommunityContent() {
   }, [appSpace?.id, user, loadUnreadCounts]);
 
   // Use access level hook
-  const { level, canChat, canDM, canAccessLocked, isLoading: isLoadingAccess, memberStatus } = useAccessLevel(appSpace?.id || null);
+  const { level, canChat, canAccessLocked, memberStatus } = useAccessLevel(appSpace?.id || null);
 
   // Fetch channels
   const { data: channelsData, isLoading: isLoadingChannels } = useQuery<{
@@ -397,7 +388,6 @@ function SpaceCommunityContent() {
     if (appSpace?.id && user?.id) {
       const completionKey = `survey_completed_${appSpace.id}_${user.id}`;
       const completed = localStorage.getItem(completionKey) === "true";
-      setSurveyCompleted(completed);
 
       // Show survey modal if user is a member and hasn't completed it
       if (surveyData?.hasQuestions && !completed && (level === "pending" || level === "approved")) {
@@ -410,14 +400,13 @@ function SpaceCommunityContent() {
     if (appSpace?.id && user?.id) {
       const completionKey = `survey_completed_${appSpace.id}_${user.id}`;
       localStorage.setItem(completionKey, "true");
-      setSurveyCompleted(true);
     }
     setShowSurveyModal(false);
   };
 
   // Auto-select first channel
   useEffect(() => {
-    if (channels.length > 0 && !selectedChannel && !currentConversation && !showDMView) {
+    if (channels.length > 0 && !selectedChannel) {
       // Select first waitlist channel if user is pending, otherwise first available
       const waitlistChannels = channels.filter(c => c.isWaitlistersOnly);
 
@@ -429,15 +418,7 @@ function SpaceCommunityContent() {
         setSelectedChannel(channels[0]);
       }
     }
-  }, [channels, selectedChannel, currentConversation, level, showDMView]);
-
-  // When a DM conversation is selected, clear the channel selection
-  useEffect(() => {
-    if (currentConversation) {
-      setSelectedChannel(null);
-      setShowDMView(true);
-    }
-  }, [currentConversation]);
+  }, [channels, selectedChannel, level]);
 
   if (isLoadingAppSpace) {
     return (
@@ -492,7 +473,6 @@ function SpaceCommunityContent() {
 
   const joinWaitlistAndRefresh = async () => {
     if (!appSpace) return;
-    setIsJoining(true);
     try {
       const res = await fetch(`/api/appspaces/${appSpace.id}/join`, {
         method: "POST",
@@ -502,20 +482,11 @@ function SpaceCommunityContent() {
       queryClient.invalidateQueries({ queryKey: ["channels", appSpace.id, user?.id] });
     } catch (error) {
       console.error("Failed to join waitlist:", error);
-    } finally {
-      setIsJoining(false);
     }
-  };
-
-  const handleLockedFeatureClick = () => {
-    setShowLockedMessage(true);
-    setTimeout(() => setShowLockedMessage(false), 3000);
   };
 
   const handleChannelSelect = (channel: RealChannel) => {
     setSelectedChannel(channel);
-    selectConversation(null);
-    setShowDMView(false);
     // Mark channel as read when selected
     if (user) {
       markChannelAsRead(channel.id);
@@ -551,7 +522,7 @@ function SpaceCommunityContent() {
               <SectionHeader title="Community" />
               {communityChannels.map((channel) => {
                 const channelUnread = unreadCounts[channel.id] || 0;
-                const isActive = selectedChannel?.id === channel.id && !showDMView;
+                const isActive = selectedChannel?.id === channel.id;
                 return (
                   <div
                     key={channel.id}
@@ -594,7 +565,7 @@ function SpaceCommunityContent() {
               <SectionHeader title="Waitlist" variant="waitlist" />
               {waitlistChannels.map((channel) => {
                 const channelUnread = unreadCounts[channel.id] || 0;
-                const isActive = selectedChannel?.id === channel.id && !showDMView;
+                const isActive = selectedChannel?.id === channel.id;
                 return (
                   <div
                     key={channel.id}
@@ -642,7 +613,7 @@ function SpaceCommunityContent() {
               />
               {membersOnlyChannels.map((channel) => {
                 const channelUnread = unreadCounts[channel.id] || 0;
-                const isActive = selectedChannel?.id === channel.id && !showDMView;
+                const isActive = selectedChannel?.id === channel.id;
                 return (
                   <div
                     key={channel.id}
@@ -681,62 +652,6 @@ function SpaceCommunityContent() {
               })}
             </>
           )}
-
-          {/* Direct Messages Section */}
-          {canDM && founder && founder.id !== user?.id && (
-            <>
-              <div className="h-px bg-white/[0.08] mx-2 my-4" />
-              <SectionHeader title="Direct Messages" />
-              <button
-                onClick={async () => {
-                  if (!canDM) {
-                    handleLockedFeatureClick();
-                    return;
-                  }
-                  try {
-                    const res = await fetch(`/api/appspaces/${appSpace.id}/conversations/founder`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      credentials: "include",
-                    });
-                    if (!res.ok) {
-                      const data = await res.json();
-                      if (data.message) {
-                        handleLockedFeatureClick();
-                      }
-                      return;
-                    }
-                    queryClient.invalidateQueries({ queryKey: ["conversations", appSpace.id] });
-                    setShowDMView(true);
-                    setSelectedChannel(null);
-                  } catch (error) {
-                    console.error("Failed to start conversation with founder:", error);
-                  }
-                }}
-                className="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-left transition-all duration-200 hover:bg-white/[0.04]"
-              >
-                <div className="relative">
-                  <Avatar className="h-8 w-8">
-                    {founder.avatarUrl ? (
-                      <AvatarImage src={founder.avatarUrl} alt={founder.displayName || founder.username || "Founder"} />
-                    ) : null}
-                    <AvatarFallback className="bg-gradient-to-br from-amber-500/20 via-pink-500/20 to-violet-500/20">
-                      <User className="h-4 w-4 text-white/50" />
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="absolute -bottom-0.5 -right-0.5 text-[8px] bg-amber-500 text-black px-1 rounded font-bold">
-                    F
-                  </span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm font-medium text-white/90 truncate block">
-                    {founder.displayName || founder.username || "Founder"}
-                  </span>
-                  <span className="text-xs text-white/55">Founder</span>
-                </div>
-              </button>
-            </>
-          )}
         </>
       )}
     </>
@@ -765,6 +680,7 @@ function SpaceCommunityContent() {
       <AppLayout
         communities={communities}
         onCommunityClick={handleCommunityClick}
+        mobileContextContent={contextPanelContent}
         contextPanel={
           <ContextPanel
             title={appSpace.name}
@@ -782,12 +698,7 @@ function SpaceCommunityContent() {
           noPadding
           header={
             <div className="flex items-center justify-between w-full">
-              {showDMView ? (
-                <HeaderTitle
-                  title={founder?.displayName || founder?.username || "Messages"}
-                  subtitle="Direct Message"
-                />
-              ) : selectedChannel ? (
+              {selectedChannel ? (
                 <HeaderTitle
                   icon={<Hash className="h-4 w-4" />}
                   title={selectedChannel.name}
@@ -817,9 +728,7 @@ function SpaceCommunityContent() {
             </div>
           }
         >
-          {showDMView ? (
-            <DMChat canDM={canDM} onBack={() => setShowDMView(false)} />
-          ) : selectedChannel ? (
+          {selectedChannel ? (
             <ChatRoomView
               channel={selectedChannel}
               appSpaceId={appSpace.id}
@@ -836,23 +745,13 @@ function SpaceCommunityContent() {
         </MainPane>
 
         {/* Member List Sidebar */}
-        {appSpace && !showDMView && (
+        {appSpace && (
           <MemberListPanel
             appSpaceId={appSpace.id}
             founderId={appSpace.founderId}
           />
         )}
       </AppLayout>
-
-      {/* Locked Feature Toast */}
-      {showLockedMessage && (
-        <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-yellow-500/20 border border-yellow-500/30 rounded-lg px-4 py-3 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 z-50">
-          <AlertCircle className="h-5 w-5 text-yellow-400" />
-          <p className="text-sm text-yellow-200">
-            Sorry you must be accepted into the app in order to use this feature
-          </p>
-        </div>
-      )}
 
       {/* Survey Response Modal */}
       {appSpace && (
@@ -875,7 +774,6 @@ function SpaceCommunityContent() {
             const channel = channels.find(c => c.id === channelId);
             if (channel) {
               setSelectedChannel(channel);
-              setShowDMView(false);
             }
             setShowSearchModal(false);
           }}
@@ -946,9 +844,5 @@ export default function SpaceCommunityPage() {
     );
   }
 
-  return (
-    <DMProvider appSpaceId={appSpaceData.appSpace.id}>
-      <SpaceCommunityContent />
-    </DMProvider>
-  );
+  return <SpaceCommunityContent />;
 }

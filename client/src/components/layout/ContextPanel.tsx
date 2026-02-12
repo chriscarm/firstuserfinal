@@ -1,7 +1,6 @@
 import { ReactNode } from "react";
-import { X, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { useLayout } from "@/contexts/LayoutContext";
 
 type UserStatus = "owner" | "member" | "waitlist" | null;
 
@@ -17,9 +16,6 @@ interface ContextPanelProps {
 
   // Footer content (optional)
   footer?: ReactNode;
-
-  // Mobile close handler
-  onMobileClose?: () => void;
 
   // Custom width (default is 200-260px)
   width?: "narrow" | "normal" | "wide";
@@ -59,11 +55,8 @@ export function ContextPanel({
   userStatus,
   children,
   footer,
-  onMobileClose,
   width = "normal",
 }: ContextPanelProps) {
-  const { mobileSidebarOpen, setMobileSidebarOpen } = useLayout();
-
   const widthClass = {
     narrow: "w-[180px]",
     normal: "w-[200px]",
@@ -131,78 +124,6 @@ export function ContextPanel({
         )}
       </aside>
 
-      {/* Mobile sidebar overlay */}
-      {mobileSidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/80 z-20 md:hidden"
-          onClick={() => setMobileSidebarOpen(false)}
-        />
-      )}
-
-      {/* Mobile sidebar */}
-      <aside
-        className={`
-          fixed inset-y-0 left-0 z-30 w-[260px] md:hidden
-          bg-black/95 border-r border-white/[0.08] transform transition-transform duration-200
-          flex flex-col
-          ${mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"}
-        `}
-        data-testid="context-panel-mobile"
-      >
-        {/* Mobile Close Button */}
-        <button
-          className="absolute top-4 right-4 h-11 w-11 flex items-center justify-center rounded-lg text-white/50 hover:text-white/90 hover:bg-white/[0.04] transition-all duration-200"
-          onClick={() => {
-            setMobileSidebarOpen(false);
-            onMobileClose?.();
-          }}
-          data-testid="context-panel-mobile-close"
-        >
-          <X className="h-6 w-6" />
-        </button>
-
-        {/* Header */}
-        {(title || logoUrl) && (
-          <div className="h-14 px-4 flex items-center gap-3 border-b border-white/[0.08]">
-            {logoUrl && (
-              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-500 via-pink-500 to-violet-500 flex items-center justify-center overflow-hidden flex-shrink-0">
-                <img
-                  src={logoUrl}
-                  alt={title || "Community"}
-                  className="w-full h-full object-cover"
-                />
-              </div>
-            )}
-            {!logoUrl && title && (
-              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-500 via-pink-500 to-violet-500 flex items-center justify-center flex-shrink-0">
-                <span className="text-lg font-bold text-white">
-                  {title[0]?.toUpperCase() || "?"}
-                </span>
-              </div>
-            )}
-            <div className="flex-1 min-w-0">
-              {title && (
-                <span className="font-display font-bold text-white/90 truncate block">
-                  {title}
-                </span>
-              )}
-              {userStatus && (
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <StatusBadge status={userStatus} />
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto py-4 px-2">{children}</div>
-
-        {/* Footer */}
-        {footer && (
-          <div className="border-t border-white/[0.08] p-3">{footer}</div>
-        )}
-      </aside>
     </>
   );
 }

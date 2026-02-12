@@ -79,6 +79,34 @@ export default function Messages() {
     setLocation(`/space/${community.slug}/community`);
   };
 
+  const inboxContextContent = (
+    <>
+      <div className="space-y-2 px-1 pb-3">
+        <label className="text-xs font-medium text-white/70">Community</label>
+        <select
+          value={selectedCommunityId ?? ""}
+          onChange={(event) => setSelectedCommunityId(Number(event.target.value))}
+          className="w-full h-11 rounded-lg bg-white/[0.04] border border-white/[0.12] px-3 text-sm text-white/90 focus:outline-none focus:border-violet-400/50"
+          data-testid="messages-community-selector"
+        >
+          {communities.map((community) => (
+            <option key={community.id} value={community.id} className="bg-black text-white">
+              {community.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {isLoadingMeta ? (
+        <div className="px-3 py-4 flex items-center justify-center">
+          <Loader2 className="h-5 w-5 animate-spin text-white/50" />
+        </div>
+      ) : (
+        <DMList canDM={canDM} />
+      )}
+    </>
+  );
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
@@ -130,6 +158,7 @@ export default function Messages() {
       <AppLayout
         communities={communities}
         onCommunityClick={(community) => handleCommunityNav(community)}
+        mobileContextContent={inboxContextContent}
         contextPanel={
           <ContextPanel
             title="Messages"
@@ -138,29 +167,7 @@ export default function Messages() {
             userStatus={statusBadge}
             width="wide"
           >
-            <div className="space-y-2 px-1 pb-3">
-              <label className="text-xs font-medium text-white/70">Community</label>
-              <select
-                value={selectedCommunityId ?? ""}
-                onChange={(event) => setSelectedCommunityId(Number(event.target.value))}
-                className="w-full h-11 rounded-lg bg-white/[0.04] border border-white/[0.12] px-3 text-sm text-white/90 focus:outline-none focus:border-violet-400/50"
-                data-testid="messages-community-selector"
-              >
-                {communities.map((community) => (
-                  <option key={community.id} value={community.id} className="bg-black text-white">
-                    {community.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {isLoadingMeta ? (
-              <div className="px-3 py-4 flex items-center justify-center">
-                <Loader2 className="h-5 w-5 animate-spin text-white/50" />
-              </div>
-            ) : (
-              <DMList canDM={canDM} />
-            )}
+            {inboxContextContent}
           </ContextPanel>
         }
       >
