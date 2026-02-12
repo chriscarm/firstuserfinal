@@ -167,7 +167,7 @@ export default function OnboardingPage() {
       <div className="w-full max-w-md relative z-10">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-white/90 mb-2">Welcome to FirstUser!</h1>
-          <p className="text-white/90/60">Complete your profile to join the community</p>
+          <p className="text-white/60">Complete your profile to join the community</p>
         </div>
         
         <form onSubmit={handleSubmit} className="bg-white/5 border border-violet-500/20 rounded-2xl p-6 backdrop-blur-sm">
@@ -195,7 +195,7 @@ export default function OnboardingPage() {
           
           <div className="space-y-4 mb-6">
             <div>
-              <label className="text-sm text-white/90/60 block mb-2">First Name *</label>
+              <label className="text-sm text-white/60 block mb-2">First Name *</label>
               <input
                 type="text"
                 value={firstName}
@@ -207,7 +207,7 @@ export default function OnboardingPage() {
               />
             </div>
             <div>
-              <label className="text-sm text-white/90/60 block mb-2">Last Name *</label>
+              <label className="text-sm text-white/60 block mb-2">Last Name *</label>
               <input
                 type="text"
                 value={lastName}

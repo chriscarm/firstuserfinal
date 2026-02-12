@@ -927,9 +927,9 @@ export function PhoneAuthModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px] bg-black border-white/[0.08] text-white max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="text-xl text-center">
+      <DialogContent className="sm:max-w-md bg-[#0a0510] border-white/10 text-white p-0 max-h-[90vh] overflow-hidden">
+        <DialogHeader className="px-6 pt-6 pb-2">
+          <DialogTitle className="text-xl text-center tracking-tight">
             {forcePhoneOnly ? "Phone Verification Required" : "Join the Waitlist"}
           </DialogTitle>
           <DialogDescription className="text-center text-white/60">
@@ -938,12 +938,14 @@ export function PhoneAuthModal({
               : "Verify your account to continue"}
           </DialogDescription>
         </DialogHeader>
-        <PhoneAuthContent
-          appSpaceSlug={appSpaceSlug}
-          appSpaceId={appSpaceId}
-          onClose={handleClose}
-          forcePhoneOnly={forcePhoneOnly}
-        />
+        <div className="px-6 pb-6 overflow-y-auto max-h-[calc(90vh-96px)]">
+          <PhoneAuthContent
+            appSpaceSlug={appSpaceSlug}
+            appSpaceId={appSpaceId}
+            onClose={handleClose}
+            forcePhoneOnly={forcePhoneOnly}
+          />
+        </div>
       </DialogContent>
     </Dialog>
   );

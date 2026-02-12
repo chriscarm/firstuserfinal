@@ -1309,7 +1309,7 @@ export default function CreateSpace() {
                     <h2 className="text-2xl font-display font-bold text-white/90 mb-2">
                       Basic Info
                     </h2>
-                    <p className="text-white/90/60 text-sm">
+                    <p className="text-white/60 text-sm">
                       Let's start with the essentials for your AppSpace.
                     </p>
                   </div>
@@ -1319,7 +1319,7 @@ export default function CreateSpace() {
                       <Label htmlFor="name" className="text-white/90">
                         App Name <span className="text-red-400">*</span>
                       </Label>
-                      <span className="text-xs text-white/90/40">
+                      <span className="text-xs text-white/40">
                         {wizardData.name.length}/50
                       </span>
                     </div>
@@ -1338,7 +1338,7 @@ export default function CreateSpace() {
                       URL Slug <span className="text-red-400">*</span>
                     </Label>
                     <div className="flex items-center gap-0">
-                      <div className="h-11 px-4 flex items-center bg-white/5 border border-r-0 border-white/10 rounded-l-xl text-white/90/60 text-sm">
+                      <div className="h-11 px-4 flex items-center bg-white/5 border border-r-0 border-white/10 rounded-l-xl text-white/60 text-sm">
                         firstuser.co/
                       </div>
                       <div className="flex-1 relative">
@@ -1353,7 +1353,7 @@ export default function CreateSpace() {
                       </div>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-xs text-white/90/40">
+                      <span className="text-xs text-white/40">
                         This cannot be changed later
                       </span>
                       {wizardData.slug && (
@@ -1382,7 +1382,7 @@ export default function CreateSpace() {
                       <Label htmlFor="tagline" className="text-white/90">
                         Tagline
                       </Label>
-                      <span className="text-xs text-white/90/40">
+                      <span className="text-xs text-white/40">
                         {wizardData.tagline.length}/100
                       </span>
                     </div>
@@ -1424,8 +1424,8 @@ export default function CreateSpace() {
                         />
                       ) : (
                         <>
-                          <Upload className="h-8 w-8 text-white/90/40 mb-2" />
-                          <span className="text-xs text-white/90/40 text-center px-2">
+                          <Upload className="h-8 w-8 text-white/40 mb-2" />
+                          <span className="text-xs text-white/40 text-center px-2">
                             Click or drag & drop
                           </span>
                         </>
@@ -1458,7 +1458,7 @@ export default function CreateSpace() {
                     <h2 className="text-2xl font-display font-bold text-white/90 mb-2">
                       The Problem
                     </h2>
-                    <p className="text-white/90/60 text-sm">
+                    <p className="text-white/60 text-sm">
                       Describe the problem your app solves.
                     </p>
                   </div>
@@ -1481,7 +1481,7 @@ export default function CreateSpace() {
                       <Label htmlFor="problemDescription" className="text-white/90">
                         Problem Description
                       </Label>
-                      <span className="text-xs text-white/90/40">
+                      <span className="text-xs text-white/40">
                         {wizardData.problemDescription.length}/1000
                       </span>
                     </div>
@@ -1506,7 +1506,7 @@ export default function CreateSpace() {
                     <h2 className="text-2xl font-display font-bold text-white/90 mb-2">
                       The Solution
                     </h2>
-                    <p className="text-white/90/60 text-sm">
+                    <p className="text-white/60 text-sm">
                       Explain how your app solves the problem.
                     </p>
                   </div>
@@ -1529,7 +1529,7 @@ export default function CreateSpace() {
                       <Label htmlFor="solutionDescription" className="text-white/90">
                         Solution Description
                       </Label>
-                      <span className="text-xs text-white/90/40">
+                      <span className="text-xs text-white/40">
                         {wizardData.solutionDescription.length}/1000
                       </span>
                     </div>
@@ -1548,7 +1548,7 @@ export default function CreateSpace() {
 
                   <div className="space-y-3">
                     <Label className="text-white/90">Solution Points</Label>
-                    <p className="text-xs text-white/90/50">
+                    <p className="text-xs text-white/50">
                       Add key features or benefits of your solution
                     </p>
                     
@@ -1612,7 +1612,7 @@ export default function CreateSpace() {
                     <h2 className="text-2xl font-display font-bold text-white/90 mb-2">
                       Founders
                     </h2>
-                    <p className="text-white/90/60 text-sm">
+                    <p className="text-white/60 text-sm">
                       Introduce the team behind your app.
                     </p>
                   </div>
@@ -1642,7 +1642,7 @@ export default function CreateSpace() {
                           <div className="flex-1 space-y-3">
                             <div className="grid grid-cols-2 gap-3">
                               <div className="space-y-1">
-                                <Label className="text-xs text-white/90/60">First Name</Label>
+                                <Label className="text-xs text-white/60">First Name</Label>
                                 <Input
                                   value={founder.firstName}
                                   onChange={(e) =>
@@ -1653,7 +1653,7 @@ export default function CreateSpace() {
                                 />
                               </div>
                               <div className="space-y-1">
-                                <Label className="text-xs text-white/90/60">Last Name</Label>
+                                <Label className="text-xs text-white/60">Last Name</Label>
                                 <Input
                                   value={founder.lastName}
                                   onChange={(e) =>
@@ -1665,7 +1665,7 @@ export default function CreateSpace() {
                               </div>
                             </div>
                             <div className="space-y-1">
-                              <Label className="text-xs text-white/90/60">Title</Label>
+                              <Label className="text-xs text-white/60">Title</Label>
                               <Input
                                 value={founder.title}
                                 onChange={(e) =>
@@ -1711,7 +1711,7 @@ export default function CreateSpace() {
                     <h2 className="text-2xl font-display font-bold text-white/90 mb-2">
                       Survey Questions
                     </h2>
-                    <p className="text-white/90/60 text-sm">
+                    <p className="text-white/60 text-sm">
                       Collect insights from your waitlist members.
                     </p>
                   </div>
@@ -1741,7 +1741,7 @@ export default function CreateSpace() {
                         }}
                         data-testid={`question-card-${index}`}
                       >
-                        <div className="cursor-grab text-white/90/40 hover:text-white/90/70 h-11 flex items-center">
+                        <div className="cursor-grab text-white/40 hover:text-white/70 h-11 flex items-center">
                           <GripVertical className="h-5 w-5" />
                         </div>
 
@@ -1790,7 +1790,7 @@ export default function CreateSpace() {
                                   }
                                   data-testid={`switch-edit-required-${index}`}
                                 />
-                                <span className="text-sm text-white/90/70">
+                                <span className="text-sm text-white/70">
                                   Required
                                 </span>
                               </div>
@@ -1904,7 +1904,7 @@ export default function CreateSpace() {
                             }
                             data-testid="switch-new-question-required"
                           />
-                          <span className="text-sm text-white/90/70">
+                          <span className="text-sm text-white/70">
                             Required
                           </span>
                         </div>
@@ -1955,7 +1955,7 @@ export default function CreateSpace() {
                     <h2 className="text-2xl font-display font-bold text-white/90 mb-2">
                       Tier Rewards
                     </h2>
-                    <p className="text-white/90/60 text-sm">
+                    <p className="text-white/60 text-sm">
                       Define rewards for your top waitlist members.
                     </p>
                   </div>
@@ -2005,7 +2005,7 @@ export default function CreateSpace() {
                                 <h3 className="text-white/90 font-semibold">
                                   {badge.name}
                                 </h3>
-                                <p className="text-xs text-white/90/50">
+                                <p className="text-xs text-white/50">
                                   {badge.positions}
                                 </p>
                               </div>

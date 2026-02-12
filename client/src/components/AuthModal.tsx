@@ -52,7 +52,7 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
         <div className={`mx-auto rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center shadow-[0_8px_24px_rgba(139,92,246,0.28)] ${mobile ? "mb-5 h-16 w-16" : "mb-5 h-[72px] w-[72px]"}`}>
           <Sparkles className={`${mobile ? "h-8 w-8" : "h-9 w-9"} text-white`} />
         </div>
-        <h2 className={`font-display font-bold text-white tracking-tight ${mobile ? "text-[2rem] mb-2 leading-tight" : "text-[2.6rem] mb-3 leading-[1.05]"}`}>
+        <h2 className={`font-display font-bold text-white tracking-tight ${mobile ? "text-[2rem] mb-2 leading-tight" : "text-[2.4rem] mb-3 leading-[1.08]"}`}>
           Welcome to FirstUser
         </h2>
         <p className={`${mobile ? "text-white/65 text-base mb-6 leading-relaxed max-w-[320px] mx-auto" : "text-white/65 text-[1.05rem] mb-7 leading-relaxed max-w-[350px] mx-auto"}`}>
