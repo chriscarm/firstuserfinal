@@ -10,8 +10,20 @@ import crypto from "crypto";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { autoSeedIfNeeded } from "./autoSeed";
+import { validateRuntimeEnvironment } from "./envValidation";
+import { installProcessAlertHandlers, opsAlertsConfigured, sendOpsAlert } from "./opsAlerts";
 
 const app = express();
+const envValidation = validateRuntimeEnvironment(process.env);
+
+envValidation.warnings.forEach((warning) => {
+  console.warn(`[EnvValidation][warning] ${warning}`);
+});
+if (envValidation.errors.length > 0) {
+  throw new Error(`Environment validation failed:\n- ${envValidation.errors.join("\n- ")}`);
+}
+
+installProcessAlertHandlers();
 
 // Serve uploads from both dist and public directories (dev vs prod)
 app.use("/uploads", express.static(path.join(process.cwd(), "dist", "public", "uploads")));
@@ -254,7 +266,14 @@ app.use((req, res, next) => {
 });
 
 app.get("/api/healthz", (_req, res) => {
-  return res.json({ ok: true, service: "firstuser", timestamp: new Date().toISOString() });
+  return res.json({
+    ok: true,
+    service: "firstuser",
+    timestamp: new Date().toISOString(),
+    monitoring: {
+      opsAlertsConfigured: opsAlertsConfigured(),
+    },
+  });
 });
 
 app.get("/api/readyz", async (_req, res) => {
@@ -282,6 +301,22 @@ app.get("/api/readyz", async (_req, res) => {
     const message = err.message || "Internal Server Error";
 
     console.error("Internal Server Error:", err);
+    if (status >= 500) {
+      void sendOpsAlert({
+        severity: "error",
+        title: "Unhandled API Error",
+        message,
+        source: "express.error-middleware",
+        dedupeKey: `express-500-${_req.method}-${_req.path}-${status}`,
+        metadata: {
+          path: _req.path,
+          method: _req.method,
+          status,
+          correlationId: (_req as Request & { correlationId?: string }).correlationId,
+          stack: err?.stack,
+        },
+      });
+    }
 
     if (res.headersSent) {
       return next(err);

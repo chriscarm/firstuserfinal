@@ -12,6 +12,7 @@ import sharp from "sharp";
 import { sendVerificationEmail } from "./email";
 import { emitNotificationToUser } from "./websocket";
 import { getHomepageOwnerPhone, getHomepageSlug, isHomepageOwnerUser, isHomepageSlug } from "./homepageOwnership";
+import { sendOpsAlert } from "./opsAlerts";
 // TextBelt SMS configuration
 const TEXTBELT_API_KEY = process.env.TEXTBELT_API_KEY || "textbelt";
 
@@ -449,6 +450,34 @@ async function issueIntegrationWaitlistIntent(options: {
   return { token, expiresAt };
 }
 
+async function sendIntegrationWebhookFailureAlert(input: {
+  integrationAppId: number;
+  deliveryId: number;
+  eventType: string;
+  attempt: number;
+  webhookUrl: string | null;
+  statusCode?: number;
+  terminal: boolean;
+  reason: string;
+}) {
+  await sendOpsAlert({
+    severity: input.terminal ? "error" : "warning",
+    title: input.terminal ? "Integration Webhook Delivery Exhausted Retries" : "Integration Webhook Delivery Failed",
+    message: input.reason,
+    source: "integration.webhooks",
+    dedupeKey: `integration-webhook-failure-${input.deliveryId}-${input.attempt}`,
+    metadata: {
+      integrationAppId: input.integrationAppId,
+      deliveryId: input.deliveryId,
+      eventType: input.eventType,
+      attempt: input.attempt,
+      statusCode: input.statusCode ?? null,
+      webhookUrl: input.webhookUrl,
+      terminal: input.terminal,
+    },
+  });
+}
+
 async function sendIntegrationWebhook(options: {
   integrationAppId: number;
   webhookUrl: string | null;
@@ -457,7 +486,21 @@ async function sendIntegrationWebhook(options: {
 }) {
   const integrationApp = await storage.getIntegrationAppById(options.integrationAppId);
   const webhookUrl = options.webhookUrl || integrationApp?.webhookUrl || null;
-  if (!integrationApp || !webhookUrl) return;
+  if (!integrationApp) return;
+  if (!webhookUrl) {
+    await sendOpsAlert({
+      severity: "warning",
+      title: "Integration Webhook URL Missing",
+      message: `Skipping webhook delivery for event ${options.eventType} because webhookUrl is not configured.`,
+      source: "integration.webhooks",
+      dedupeKey: `integration-webhook-missing-url-${options.integrationAppId}`,
+      metadata: {
+        integrationAppId: options.integrationAppId,
+        eventType: options.eventType,
+      },
+    });
+    return;
+  }
 
   const webhookSecret = integrationApp.webhookSecret || INTEGRATION_WEBHOOK_SIGNING_FALLBACK;
 
@@ -503,11 +546,30 @@ async function sendIntegrationWebhook(options: {
       attempt: 1,
       nextRetryAt: new Date(Date.now() + 60_000),
     });
+    await sendIntegrationWebhookFailureAlert({
+      integrationAppId: options.integrationAppId,
+      deliveryId: delivery.id,
+      eventType: options.eventType,
+      attempt: 1,
+      webhookUrl,
+      statusCode: response.status,
+      terminal: false,
+      reason: `Webhook delivery failed with status ${response.status}.`,
+    });
   } catch {
     await storage.updateIntegrationWebhookDeliveryStatus(delivery.id, {
       status: "failed",
       attempt: 1,
       nextRetryAt: new Date(Date.now() + 60_000),
+    });
+    await sendIntegrationWebhookFailureAlert({
+      integrationAppId: options.integrationAppId,
+      deliveryId: delivery.id,
+      eventType: options.eventType,
+      attempt: 1,
+      webhookUrl,
+      terminal: false,
+      reason: "Webhook delivery failed due to network or runtime error.",
     });
   }
 }
@@ -519,20 +581,30 @@ async function retrySingleIntegrationWebhookDelivery(delivery: {
   eventType: string;
   attempt: number;
 }) {
+  const maxAttempts = 5;
+  const nextAttempt = delivery.attempt + 1;
   const integrationApp = await storage.getIntegrationAppById(delivery.integrationAppId);
   if (!integrationApp?.webhookUrl) {
+    const terminal = nextAttempt >= maxAttempts;
     await storage.updateIntegrationWebhookDeliveryStatus(delivery.id, {
       status: "failed",
-      attempt: delivery.attempt + 1,
-      nextRetryAt: new Date(Date.now() + 15 * 60_000),
+      attempt: nextAttempt,
+      nextRetryAt: terminal ? null : new Date(Date.now() + 15 * 60_000),
+    });
+    await sendIntegrationWebhookFailureAlert({
+      integrationAppId: delivery.integrationAppId,
+      deliveryId: delivery.id,
+      eventType: delivery.eventType,
+      attempt: nextAttempt,
+      webhookUrl: null,
+      terminal,
+      reason: "Webhook retry skipped because integration webhook URL is missing.",
     });
     return;
   }
 
   const webhookSecret = integrationApp.webhookSecret || INTEGRATION_WEBHOOK_SIGNING_FALLBACK;
   const signature = signWebhookPayload(delivery.payload, webhookSecret);
-  const nextAttempt = delivery.attempt + 1;
-  const maxAttempts = 5;
 
   try {
     const response = await fetch(integrationApp.webhookUrl, {
@@ -554,18 +626,39 @@ async function retrySingleIntegrationWebhookDelivery(delivery: {
       return;
     }
 
+    const terminal = nextAttempt >= maxAttempts;
     const retryDelayMs = Math.min(30 * 60_000, Math.pow(2, nextAttempt) * 60_000);
     await storage.updateIntegrationWebhookDeliveryStatus(delivery.id, {
-      status: nextAttempt >= maxAttempts ? "failed" : "failed",
+      status: "failed",
       attempt: nextAttempt,
-      nextRetryAt: nextAttempt >= maxAttempts ? null : new Date(Date.now() + retryDelayMs),
+      nextRetryAt: terminal ? null : new Date(Date.now() + retryDelayMs),
+    });
+    await sendIntegrationWebhookFailureAlert({
+      integrationAppId: delivery.integrationAppId,
+      deliveryId: delivery.id,
+      eventType: delivery.eventType,
+      attempt: nextAttempt,
+      webhookUrl: integrationApp.webhookUrl,
+      statusCode: response.status,
+      terminal,
+      reason: `Webhook retry failed with status ${response.status}.`,
     });
   } catch {
+    const terminal = nextAttempt >= maxAttempts;
     const retryDelayMs = Math.min(30 * 60_000, Math.pow(2, nextAttempt) * 60_000);
     await storage.updateIntegrationWebhookDeliveryStatus(delivery.id, {
-      status: nextAttempt >= maxAttempts ? "failed" : "failed",
+      status: "failed",
       attempt: nextAttempt,
-      nextRetryAt: nextAttempt >= maxAttempts ? null : new Date(Date.now() + retryDelayMs),
+      nextRetryAt: terminal ? null : new Date(Date.now() + retryDelayMs),
+    });
+    await sendIntegrationWebhookFailureAlert({
+      integrationAppId: delivery.integrationAppId,
+      deliveryId: delivery.id,
+      eventType: delivery.eventType,
+      attempt: nextAttempt,
+      webhookUrl: integrationApp.webhookUrl,
+      terminal,
+      reason: "Webhook retry failed due to network or runtime error.",
     });
   }
 }
@@ -796,6 +889,16 @@ export async function registerRoutes(
         await Promise.all(pending.map((delivery) => retrySingleIntegrationWebhookDelivery(delivery)));
       } catch (error) {
         console.error("[IntegrationWebhookRetry] Error processing retries:", error);
+        await sendOpsAlert({
+          severity: "error",
+          title: "Integration Webhook Retry Loop Error",
+          message: "Unexpected error while processing webhook retries.",
+          source: "integration.webhooks.retry-loop",
+          dedupeKey: "integration-webhook-retry-loop-error",
+          metadata: {
+            error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
+          },
+        });
       }
     }, 60_000).unref();
   }
