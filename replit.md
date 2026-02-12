@@ -117,7 +117,7 @@ Use this checklist whenever an agent starts or finishes work in this Replit work
 
 ### 1) Confirm GitHub Push Will Work From SSH
 - Run `git remote -v`
-- `origin` must be SSH (example: `git@github.com:chriscarm/firstuser-launch-ready.git`)
+- `origin` must be SSH (example: `git@github.com:chriscarm/firstuserfinal.git`)
 
 ### 2) Confirm Branch + Working Tree
 - Run `git status -sb`
