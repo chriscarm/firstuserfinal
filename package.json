@@ -12,6 +12,7 @@
     "verify": "npm run check && npm run build",
     "verify:quick": "npm run check",
     "db:push": "drizzle-kit push",
+    "sandbox:partner-test-app": "node sandbox/partner-test-app/server.mjs",
     "setup:hooks": "bash scripts/setup-git-hooks.sh",
     "ship": "bash scripts/ship.sh"
   },
