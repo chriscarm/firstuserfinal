@@ -546,6 +546,136 @@ export const insertLiveChatMessageSchema = createInsertSchema(liveChatMessages).
 export type InsertLiveChatMessage = z.infer<typeof insertLiveChatMessageSchema>;
 export type LiveChatMessage = typeof liveChatMessages.$inferSelect;
 
+// Partner integration app configuration (one per AppSpace for v1)
+export const integrationApps = pgTable("integration_apps", {
+  id: serial("id").primaryKey(),
+  appSpaceId: integer("app_space_id").notNull().references(() => appSpaces.id).unique(),
+  publicAppId: text("public_app_id").notNull().unique(),
+  redirectEnabled: boolean("redirect_enabled").notNull().default(true),
+  embeddedEnabled: boolean("embedded_enabled").notNull().default(false),
+  webRedirectUrl: text("web_redirect_url"),
+  mobileDeepLinkUrl: text("mobile_deep_link_url"),
+  allowedOrigins: text("allowed_origins").notNull().default("[]"), // JSON array string
+  webhookUrl: text("webhook_url"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertIntegrationAppSchema = createInsertSchema(integrationApps).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertIntegrationApp = z.infer<typeof insertIntegrationAppSchema>;
+export type IntegrationApp = typeof integrationApps.$inferSelect;
+
+// Rotatable server-to-server key credentials for partner apps
+export const integrationApiKeys = pgTable("integration_api_keys", {
+  id: serial("id").primaryKey(),
+  integrationAppId: integer("integration_app_id").notNull().references(() => integrationApps.id),
+  keyId: text("key_id").notNull().unique(),
+  secretHash: text("secret_hash").notNull(),
+  lastFour: text("last_four").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  revokedAt: timestamp("revoked_at"),
+});
+
+export const insertIntegrationApiKeySchema = createInsertSchema(integrationApiKeys).omit({
+  id: true,
+  createdAt: true,
+  revokedAt: true,
+});
+export type InsertIntegrationApiKey = z.infer<typeof insertIntegrationApiKeySchema>;
+export type IntegrationApiKey = typeof integrationApiKeys.$inferSelect;
+
+// One-time access codes used for partner auto-login/deep-link exchange
+export const integrationAccessCodes = pgTable("integration_access_codes", {
+  id: serial("id").primaryKey(),
+  integrationAppId: integer("integration_app_id").notNull().references(() => integrationApps.id),
+  firstuserUserId: text("firstuser_user_id").notNull().references(() => users.id),
+  appSpaceId: integer("app_space_id").notNull().references(() => appSpaces.id),
+  codeHash: text("code_hash").notNull(),
+  status: text("status").notNull().default("issued"), // issued | redeemed | expired
+  expiresAt: timestamp("expires_at").notNull(),
+  redeemedAt: timestamp("redeemed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertIntegrationAccessCodeSchema = createInsertSchema(integrationAccessCodes).omit({
+  id: true,
+  redeemedAt: true,
+  createdAt: true,
+});
+export type InsertIntegrationAccessCode = z.infer<typeof insertIntegrationAccessCodeSchema>;
+export type IntegrationAccessCode = typeof integrationAccessCodes.$inferSelect;
+
+// Mapping between FirstUser identity and partner app identity
+export const integrationIdentityLinks = pgTable("integration_identity_links", {
+  id: serial("id").primaryKey(),
+  integrationAppId: integer("integration_app_id").notNull().references(() => integrationApps.id),
+  firstuserUserId: text("firstuser_user_id").notNull().references(() => users.id),
+  externalUserId: text("external_user_id").notNull(),
+  currentPlanTier: text("current_plan_tier").notNull().default("free"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  integrationExternalUnique: unique("integration_identity_links_integration_external_unique").on(
+    table.integrationAppId,
+    table.externalUserId,
+  ),
+  integrationFirstUserUnique: unique("integration_identity_links_integration_firstuser_unique").on(
+    table.integrationAppId,
+    table.firstuserUserId,
+  ),
+}));
+
+export const insertIntegrationIdentityLinkSchema = createInsertSchema(integrationIdentityLinks).omit({
+  id: true,
+  updatedAt: true,
+});
+export type InsertIntegrationIdentityLink = z.infer<typeof insertIntegrationIdentityLinkSchema>;
+export type IntegrationIdentityLink = typeof integrationIdentityLinks.$inferSelect;
+
+// Coarse session tracking from partner heartbeat stream
+export const integrationUsageSessions = pgTable("integration_usage_sessions", {
+  id: serial("id").primaryKey(),
+  integrationAppId: integer("integration_app_id").notNull().references(() => integrationApps.id),
+  firstuserUserId: text("firstuser_user_id").notNull().references(() => users.id),
+  membershipStatus: text("membership_status").notNull(), // pending | approved
+  clientPlatform: text("client_platform").notNull().default("web"),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+  endedAt: timestamp("ended_at"),
+  durationSeconds: integer("duration_seconds"),
+});
+
+export const insertIntegrationUsageSessionSchema = createInsertSchema(integrationUsageSessions).omit({
+  id: true,
+  endedAt: true,
+  durationSeconds: true,
+});
+export type InsertIntegrationUsageSession = z.infer<typeof insertIntegrationUsageSessionSchema>;
+export type IntegrationUsageSession = typeof integrationUsageSessions.$inferSelect;
+
+// Outbound webhook delivery logs for partner callbacks
+export const integrationWebhookDeliveries = pgTable("integration_webhook_deliveries", {
+  id: serial("id").primaryKey(),
+  integrationAppId: integer("integration_app_id").notNull().references(() => integrationApps.id),
+  eventType: text("event_type").notNull(),
+  payload: text("payload").notNull(),
+  signature: text("signature").notNull(),
+  attempt: integer("attempt").notNull().default(1),
+  status: text("status").notNull().default("pending"), // pending | delivered | failed
+  nextRetryAt: timestamp("next_retry_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertIntegrationWebhookDeliverySchema = createInsertSchema(integrationWebhookDeliveries).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertIntegrationWebhookDelivery = z.infer<typeof insertIntegrationWebhookDeliverySchema>;
+export type IntegrationWebhookDelivery = typeof integrationWebhookDeliveries.$inferSelect;
+
 // Message reactions
 export const messageReactions = pgTable("message_reactions", {
   id: serial("id").primaryKey(),

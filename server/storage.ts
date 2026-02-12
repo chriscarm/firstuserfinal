@@ -1,4 +1,5 @@
 import { db } from "./db";
+import crypto from "crypto";
 import {
   users,
   appSpaces,
@@ -23,6 +24,12 @@ import {
   livePresence,
   liveChatThreads,
   liveChatMessages,
+  integrationApps,
+  integrationApiKeys,
+  integrationAccessCodes,
+  integrationIdentityLinks,
+  integrationUsageSessions,
+  integrationWebhookDeliveries,
   appSpaceDrafts,
   adminIdeas,
   authVerifications,
@@ -77,6 +84,18 @@ import {
   type InsertLiveChatThread,
   type LiveChatMessage,
   type InsertLiveChatMessage,
+  type IntegrationApp,
+  type InsertIntegrationApp,
+  type IntegrationApiKey,
+  type InsertIntegrationApiKey,
+  type IntegrationAccessCode,
+  type InsertIntegrationAccessCode,
+  type IntegrationIdentityLink,
+  type InsertIntegrationIdentityLink,
+  type IntegrationUsageSession,
+  type InsertIntegrationUsageSession,
+  type IntegrationWebhookDelivery,
+  type InsertIntegrationWebhookDelivery,
   type AppSpaceDraft,
   type InsertAppSpaceDraft,
   type AdminIdea,
@@ -94,7 +113,7 @@ import {
   type TicketPolicyEvent,
   type InsertTicketPolicyEvent,
 } from "@shared/schema";
-import { eq, sql, desc, and, asc, count, gt, lt, inArray, gte, or } from "drizzle-orm";
+import { eq, sql, desc, and, asc, count, gt, lt, inArray, gte, or, isNull } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -165,6 +184,70 @@ export interface IStorage {
   }>>;
   markLiveChatThreadRead(threadId: number, readerUserId: string): Promise<void>;
   isLiveChatParticipant(threadId: number, userId: string): Promise<boolean>;
+
+  getIntegrationAppById(id: number): Promise<IntegrationApp | undefined>;
+  getIntegrationAppByAppSpaceId(appSpaceId: number): Promise<IntegrationApp | undefined>;
+  getIntegrationAppByPublicAppId(publicAppId: string): Promise<IntegrationApp | undefined>;
+  createOrUpdateIntegrationApp(input: {
+    appSpaceId: number;
+    publicAppId?: string;
+    redirectEnabled?: boolean;
+    embeddedEnabled?: boolean;
+    webRedirectUrl?: string | null;
+    mobileDeepLinkUrl?: string | null;
+    allowedOrigins?: string[];
+    webhookUrl?: string | null;
+  }): Promise<IntegrationApp>;
+  rotateIntegrationApiKey(integrationAppId: number, keyId: string, secretHash: string, lastFour: string): Promise<IntegrationApiKey>;
+  getActiveIntegrationApiKeyByKeyId(keyId: string): Promise<IntegrationApiKey | undefined>;
+  getActiveIntegrationApiKeyForApp(integrationAppId: number): Promise<IntegrationApiKey | undefined>;
+  createIntegrationAccessCode(input: InsertIntegrationAccessCode): Promise<IntegrationAccessCode>;
+  getIntegrationAccessCodeByHash(codeHash: string): Promise<IntegrationAccessCode | undefined>;
+  redeemIntegrationAccessCode(id: number): Promise<IntegrationAccessCode | undefined>;
+  upsertIntegrationIdentityLink(input: {
+    integrationAppId: number;
+    firstuserUserId: string;
+    externalUserId: string;
+    currentPlanTier?: string;
+  }): Promise<IntegrationIdentityLink>;
+  getIntegrationIdentityLinkByExternalUserId(integrationAppId: number, externalUserId: string): Promise<IntegrationIdentityLink | undefined>;
+  getIntegrationIdentityLinkByFirstUserId(integrationAppId: number, firstuserUserId: string): Promise<IntegrationIdentityLink | undefined>;
+  upsertIntegrationUsageHeartbeat(input: {
+    integrationAppId: number;
+    firstuserUserId: string;
+    membershipStatus: "pending" | "approved";
+    clientPlatform: string;
+    status: "live" | "idle" | "offline";
+    at: Date;
+  }): Promise<IntegrationUsageSession>;
+  getIntegrationUsageSummary(integrationAppId: number): Promise<{
+    sessionsCount: number;
+    totalMinutes: number;
+    avgSessionMinutes: number;
+  }>;
+  getIntegrationEngagementCandidates(integrationAppId: number, status: "pending" | "approved"): Promise<Array<{
+    userId: string;
+    username: string | null;
+    displayName: string | null;
+    avatarUrl: string | null;
+    membershipStatus: string;
+    sessionsCount: number;
+    totalMinutes: number;
+    avgSessionMinutes: number;
+    lastSeenAt: Date | null;
+  }>>;
+  createIntegrationWebhookDelivery(input: InsertIntegrationWebhookDelivery): Promise<IntegrationWebhookDelivery>;
+  updateIntegrationWebhookDeliveryStatus(id: number, updates: {
+    status: "pending" | "delivered" | "failed";
+    attempt?: number;
+    nextRetryAt?: Date | null;
+  }): Promise<IntegrationWebhookDelivery | undefined>;
+  getIntegrationHealth(integrationAppId: number): Promise<{
+    hasApiKey: boolean;
+    hasWebhookUrl: boolean;
+    redirectConfigured: boolean;
+    embeddedConfigured: boolean;
+  }>;
 }
 
 export class DbStorage implements IStorage {
@@ -976,6 +1059,497 @@ export class DbStorage implements IStorage {
         sql`${liveChatMessages.senderUserId} <> ${readerUserId}`,
         sql`${liveChatMessages.readAt} IS NULL`
       ));
+  }
+
+  // ============ INTEGRATIONS ============
+
+  async getIntegrationAppById(id: number): Promise<IntegrationApp | undefined> {
+    const result = await db.select().from(integrationApps)
+      .where(eq(integrationApps.id, id))
+      .limit(1);
+    return result[0];
+  }
+
+  async getIntegrationAppByAppSpaceId(appSpaceId: number): Promise<IntegrationApp | undefined> {
+    const result = await db.select().from(integrationApps)
+      .where(eq(integrationApps.appSpaceId, appSpaceId))
+      .limit(1);
+    return result[0];
+  }
+
+  async getIntegrationAppByPublicAppId(publicAppId: string): Promise<IntegrationApp | undefined> {
+    const result = await db.select().from(integrationApps)
+      .where(eq(integrationApps.publicAppId, publicAppId))
+      .limit(1);
+    return result[0];
+  }
+
+  async createOrUpdateIntegrationApp(input: {
+    appSpaceId: number;
+    publicAppId?: string;
+    redirectEnabled?: boolean;
+    embeddedEnabled?: boolean;
+    webRedirectUrl?: string | null;
+    mobileDeepLinkUrl?: string | null;
+    allowedOrigins?: string[];
+    webhookUrl?: string | null;
+  }): Promise<IntegrationApp> {
+    const existing = await this.getIntegrationAppByAppSpaceId(input.appSpaceId);
+    const normalizedOrigins = input.allowedOrigins
+      ? Array.from(new Set(input.allowedOrigins.map((origin) => origin.trim()).filter(Boolean)))
+      : undefined;
+
+    if (existing) {
+      const updates: Partial<IntegrationApp> = {
+        updatedAt: new Date(),
+      };
+      if (input.publicAppId !== undefined) updates.publicAppId = input.publicAppId.trim();
+      if (input.redirectEnabled !== undefined) updates.redirectEnabled = input.redirectEnabled;
+      if (input.embeddedEnabled !== undefined) updates.embeddedEnabled = input.embeddedEnabled;
+      if (input.webRedirectUrl !== undefined) updates.webRedirectUrl = input.webRedirectUrl;
+      if (input.mobileDeepLinkUrl !== undefined) updates.mobileDeepLinkUrl = input.mobileDeepLinkUrl;
+      if (input.webhookUrl !== undefined) updates.webhookUrl = input.webhookUrl;
+      if (normalizedOrigins !== undefined) updates.allowedOrigins = JSON.stringify(normalizedOrigins);
+
+      const result = await db.update(integrationApps)
+        .set(updates)
+        .where(eq(integrationApps.id, existing.id))
+        .returning();
+      return result[0];
+    }
+
+    const created = await db.insert(integrationApps).values({
+      appSpaceId: input.appSpaceId,
+      publicAppId: input.publicAppId?.trim() || `app_${crypto.randomBytes(8).toString("hex")}`,
+      redirectEnabled: input.redirectEnabled ?? true,
+      embeddedEnabled: input.embeddedEnabled ?? false,
+      webRedirectUrl: input.webRedirectUrl ?? null,
+      mobileDeepLinkUrl: input.mobileDeepLinkUrl ?? null,
+      allowedOrigins: JSON.stringify(normalizedOrigins ?? []),
+      webhookUrl: input.webhookUrl ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }).returning();
+
+    return created[0];
+  }
+
+  async rotateIntegrationApiKey(
+    integrationAppId: number,
+    keyId: string,
+    secretHash: string,
+    lastFour: string
+  ): Promise<IntegrationApiKey> {
+    await db.update(integrationApiKeys)
+      .set({ revokedAt: new Date() })
+      .where(and(
+        eq(integrationApiKeys.integrationAppId, integrationAppId),
+        isNull(integrationApiKeys.revokedAt),
+      ));
+
+    const created = await db.insert(integrationApiKeys).values({
+      integrationAppId,
+      keyId,
+      secretHash,
+      lastFour,
+      createdAt: new Date(),
+    }).returning();
+
+    return created[0];
+  }
+
+  async getActiveIntegrationApiKeyByKeyId(keyId: string): Promise<IntegrationApiKey | undefined> {
+    const result = await db.select().from(integrationApiKeys)
+      .where(and(
+        eq(integrationApiKeys.keyId, keyId),
+        isNull(integrationApiKeys.revokedAt),
+      ))
+      .limit(1);
+    return result[0];
+  }
+
+  async getActiveIntegrationApiKeyForApp(integrationAppId: number): Promise<IntegrationApiKey | undefined> {
+    const result = await db.select().from(integrationApiKeys)
+      .where(and(
+        eq(integrationApiKeys.integrationAppId, integrationAppId),
+        isNull(integrationApiKeys.revokedAt),
+      ))
+      .orderBy(desc(integrationApiKeys.createdAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async createIntegrationAccessCode(input: InsertIntegrationAccessCode): Promise<IntegrationAccessCode> {
+    const created = await db.insert(integrationAccessCodes).values({
+      ...input,
+      createdAt: new Date(),
+    }).returning();
+    return created[0];
+  }
+
+  async getIntegrationAccessCodeByHash(codeHash: string): Promise<IntegrationAccessCode | undefined> {
+    const result = await db.select().from(integrationAccessCodes)
+      .where(eq(integrationAccessCodes.codeHash, codeHash))
+      .orderBy(desc(integrationAccessCodes.createdAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async redeemIntegrationAccessCode(id: number): Promise<IntegrationAccessCode | undefined> {
+    const result = await db.update(integrationAccessCodes)
+      .set({
+        status: "redeemed",
+        redeemedAt: new Date(),
+      })
+      .where(and(
+        eq(integrationAccessCodes.id, id),
+        eq(integrationAccessCodes.status, "issued"),
+      ))
+      .returning();
+    return result[0];
+  }
+
+  async upsertIntegrationIdentityLink(input: {
+    integrationAppId: number;
+    firstuserUserId: string;
+    externalUserId: string;
+    currentPlanTier?: string;
+  }): Promise<IntegrationIdentityLink> {
+    const now = new Date();
+    const tier = input.currentPlanTier ?? "free";
+    const existingByFirstUser = await db.select().from(integrationIdentityLinks)
+      .where(and(
+        eq(integrationIdentityLinks.integrationAppId, input.integrationAppId),
+        eq(integrationIdentityLinks.firstuserUserId, input.firstuserUserId),
+      ))
+      .limit(1);
+
+    if (existingByFirstUser[0]) {
+      const updated = await db.update(integrationIdentityLinks)
+        .set({
+          externalUserId: input.externalUserId,
+          currentPlanTier: tier,
+          updatedAt: now,
+        })
+        .where(eq(integrationIdentityLinks.id, existingByFirstUser[0].id))
+        .returning();
+      return updated[0];
+    }
+
+    const existingByExternal = await db.select().from(integrationIdentityLinks)
+      .where(and(
+        eq(integrationIdentityLinks.integrationAppId, input.integrationAppId),
+        eq(integrationIdentityLinks.externalUserId, input.externalUserId),
+      ))
+      .limit(1);
+
+    if (existingByExternal[0]) {
+      const updated = await db.update(integrationIdentityLinks)
+        .set({
+          firstuserUserId: input.firstuserUserId,
+          currentPlanTier: tier,
+          updatedAt: now,
+        })
+        .where(eq(integrationIdentityLinks.id, existingByExternal[0].id))
+        .returning();
+      return updated[0];
+    }
+
+    const created = await db.insert(integrationIdentityLinks).values({
+      integrationAppId: input.integrationAppId,
+      firstuserUserId: input.firstuserUserId,
+      externalUserId: input.externalUserId,
+      currentPlanTier: tier,
+      updatedAt: now,
+    }).returning();
+    return created[0];
+  }
+
+  async getIntegrationIdentityLinkByExternalUserId(
+    integrationAppId: number,
+    externalUserId: string
+  ): Promise<IntegrationIdentityLink | undefined> {
+    const result = await db.select().from(integrationIdentityLinks)
+      .where(and(
+        eq(integrationIdentityLinks.integrationAppId, integrationAppId),
+        eq(integrationIdentityLinks.externalUserId, externalUserId),
+      ))
+      .limit(1);
+    return result[0];
+  }
+
+  async getIntegrationIdentityLinkByFirstUserId(
+    integrationAppId: number,
+    firstuserUserId: string
+  ): Promise<IntegrationIdentityLink | undefined> {
+    const result = await db.select().from(integrationIdentityLinks)
+      .where(and(
+        eq(integrationIdentityLinks.integrationAppId, integrationAppId),
+        eq(integrationIdentityLinks.firstuserUserId, firstuserUserId),
+      ))
+      .limit(1);
+    return result[0];
+  }
+
+  async upsertIntegrationUsageHeartbeat(input: {
+    integrationAppId: number;
+    firstuserUserId: string;
+    membershipStatus: "pending" | "approved";
+    clientPlatform: string;
+    status: "live" | "idle" | "offline";
+    at: Date;
+  }): Promise<IntegrationUsageSession> {
+    const current = await db.select().from(integrationUsageSessions)
+      .where(and(
+        eq(integrationUsageSessions.integrationAppId, input.integrationAppId),
+        eq(integrationUsageSessions.firstuserUserId, input.firstuserUserId),
+        isNull(integrationUsageSessions.endedAt),
+      ))
+      .orderBy(desc(integrationUsageSessions.startedAt))
+      .limit(1);
+
+    const active = current[0];
+    const safePlatform = input.clientPlatform.trim().slice(0, 32) || "web";
+
+    if (input.status === "offline") {
+      if (active) {
+        const durationSeconds = Math.max(
+          0,
+          Math.floor((input.at.getTime() - active.startedAt.getTime()) / 1000)
+        );
+        const updated = await db.update(integrationUsageSessions)
+          .set({
+            membershipStatus: input.membershipStatus,
+            clientPlatform: safePlatform,
+            lastSeenAt: input.at,
+            endedAt: input.at,
+            durationSeconds,
+          })
+          .where(eq(integrationUsageSessions.id, active.id))
+          .returning();
+        return updated[0];
+      }
+
+      const createdClosed = await db.insert(integrationUsageSessions).values({
+        integrationAppId: input.integrationAppId,
+        firstuserUserId: input.firstuserUserId,
+        membershipStatus: input.membershipStatus,
+        clientPlatform: safePlatform,
+        startedAt: input.at,
+        lastSeenAt: input.at,
+        endedAt: input.at,
+        durationSeconds: 0,
+      }).returning();
+      return createdClosed[0];
+    }
+
+    if (active) {
+      const updated = await db.update(integrationUsageSessions)
+        .set({
+          membershipStatus: input.membershipStatus,
+          clientPlatform: safePlatform,
+          lastSeenAt: input.at,
+        })
+        .where(eq(integrationUsageSessions.id, active.id))
+        .returning();
+      return updated[0];
+    }
+
+    const created = await db.insert(integrationUsageSessions).values({
+      integrationAppId: input.integrationAppId,
+      firstuserUserId: input.firstuserUserId,
+      membershipStatus: input.membershipStatus,
+      clientPlatform: safePlatform,
+      startedAt: input.at,
+      lastSeenAt: input.at,
+    }).returning();
+    return created[0];
+  }
+
+  async getIntegrationUsageSummary(integrationAppId: number): Promise<{
+    sessionsCount: number;
+    totalMinutes: number;
+    avgSessionMinutes: number;
+  }> {
+    const sessions = await db.select({
+      startedAt: integrationUsageSessions.startedAt,
+      lastSeenAt: integrationUsageSessions.lastSeenAt,
+      endedAt: integrationUsageSessions.endedAt,
+      durationSeconds: integrationUsageSessions.durationSeconds,
+    }).from(integrationUsageSessions)
+      .where(eq(integrationUsageSessions.integrationAppId, integrationAppId));
+
+    let totalSeconds = 0;
+    for (const session of sessions) {
+      if (session.durationSeconds !== null && session.durationSeconds !== undefined) {
+        totalSeconds += session.durationSeconds;
+        continue;
+      }
+      const stopAt = session.endedAt ?? session.lastSeenAt;
+      totalSeconds += Math.max(0, Math.floor((stopAt.getTime() - session.startedAt.getTime()) / 1000));
+    }
+
+    const sessionsCount = sessions.length;
+    const totalMinutes = Number((totalSeconds / 60).toFixed(2));
+    const avgSessionMinutes = sessionsCount > 0 ? Number((totalMinutes / sessionsCount).toFixed(2)) : 0;
+
+    return {
+      sessionsCount,
+      totalMinutes,
+      avgSessionMinutes,
+    };
+  }
+
+  async getIntegrationEngagementCandidates(
+    integrationAppId: number,
+    status: "pending" | "approved"
+  ): Promise<Array<{
+    userId: string;
+    username: string | null;
+    displayName: string | null;
+    avatarUrl: string | null;
+    membershipStatus: string;
+    sessionsCount: number;
+    totalMinutes: number;
+    avgSessionMinutes: number;
+    lastSeenAt: Date | null;
+  }>> {
+    const app = await this.getIntegrationAppById(integrationAppId);
+    if (!app) return [];
+
+    const members = await db.select({
+      userId: waitlistMembers.userId,
+      membershipStatus: waitlistMembers.status,
+      username: users.username,
+      displayName: users.displayName,
+      avatarUrl: users.avatarUrl,
+    })
+      .from(waitlistMembers)
+      .innerJoin(users, eq(waitlistMembers.userId, users.id))
+      .where(and(
+        eq(waitlistMembers.appSpaceId, app.appSpaceId),
+        eq(waitlistMembers.status, status),
+      ));
+
+    const sessions = await db.select({
+      firstuserUserId: integrationUsageSessions.firstuserUserId,
+      startedAt: integrationUsageSessions.startedAt,
+      lastSeenAt: integrationUsageSessions.lastSeenAt,
+      endedAt: integrationUsageSessions.endedAt,
+      durationSeconds: integrationUsageSessions.durationSeconds,
+    })
+      .from(integrationUsageSessions)
+      .where(eq(integrationUsageSessions.integrationAppId, integrationAppId));
+
+    const metrics = new Map<string, {
+      sessionsCount: number;
+      totalSeconds: number;
+      lastSeenAt: Date | null;
+    }>();
+
+    for (const session of sessions) {
+      const existing = metrics.get(session.firstuserUserId) || {
+        sessionsCount: 0,
+        totalSeconds: 0,
+        lastSeenAt: null,
+      };
+
+      existing.sessionsCount += 1;
+      const stopAt = session.endedAt ?? session.lastSeenAt;
+      const durationSeconds = session.durationSeconds ?? Math.max(
+        0,
+        Math.floor((stopAt.getTime() - session.startedAt.getTime()) / 1000),
+      );
+      existing.totalSeconds += durationSeconds;
+
+      if (!existing.lastSeenAt || session.lastSeenAt > existing.lastSeenAt) {
+        existing.lastSeenAt = session.lastSeenAt;
+      }
+
+      metrics.set(session.firstuserUserId, existing);
+    }
+
+    return members
+      .map((member) => {
+        const metric = metrics.get(member.userId);
+        const sessionsCount = metric?.sessionsCount ?? 0;
+        const totalMinutes = Number((((metric?.totalSeconds ?? 0) / 60)).toFixed(2));
+        const avgSessionMinutes = sessionsCount > 0 ? Number((totalMinutes / sessionsCount).toFixed(2)) : 0;
+        return {
+          userId: member.userId,
+          username: member.username,
+          displayName: member.displayName,
+          avatarUrl: member.avatarUrl,
+          membershipStatus: member.membershipStatus,
+          sessionsCount,
+          totalMinutes,
+          avgSessionMinutes,
+          lastSeenAt: metric?.lastSeenAt ?? null,
+        };
+      })
+      .sort((a, b) => {
+        if (b.totalMinutes !== a.totalMinutes) return b.totalMinutes - a.totalMinutes;
+        if (b.sessionsCount !== a.sessionsCount) return b.sessionsCount - a.sessionsCount;
+        return (b.lastSeenAt?.getTime() ?? 0) - (a.lastSeenAt?.getTime() ?? 0);
+      });
+  }
+
+  async createIntegrationWebhookDelivery(input: InsertIntegrationWebhookDelivery): Promise<IntegrationWebhookDelivery> {
+    const created = await db.insert(integrationWebhookDeliveries).values({
+      ...input,
+      createdAt: new Date(),
+    }).returning();
+    return created[0];
+  }
+
+  async updateIntegrationWebhookDeliveryStatus(id: number, updates: {
+    status: "pending" | "delivered" | "failed";
+    attempt?: number;
+    nextRetryAt?: Date | null;
+  }): Promise<IntegrationWebhookDelivery | undefined> {
+    const result = await db.update(integrationWebhookDeliveries)
+      .set({
+        status: updates.status,
+        attempt: updates.attempt,
+        nextRetryAt: updates.nextRetryAt ?? null,
+      })
+      .where(eq(integrationWebhookDeliveries.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getIntegrationHealth(integrationAppId: number): Promise<{
+    hasApiKey: boolean;
+    hasWebhookUrl: boolean;
+    redirectConfigured: boolean;
+    embeddedConfigured: boolean;
+  }> {
+    const app = await this.getIntegrationAppById(integrationAppId);
+    if (!app) {
+      return {
+        hasApiKey: false,
+        hasWebhookUrl: false,
+        redirectConfigured: false,
+        embeddedConfigured: false,
+      };
+    }
+
+    const key = await this.getActiveIntegrationApiKeyForApp(integrationAppId);
+    const origins = (() => {
+      try {
+        const parsed = JSON.parse(app.allowedOrigins || "[]");
+        return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string" && item.trim()) : [];
+      } catch {
+        return [];
+      }
+    })();
+
+    return {
+      hasApiKey: !!key,
+      hasWebhookUrl: !!app.webhookUrl,
+      redirectConfigured: !app.redirectEnabled || !!app.webRedirectUrl,
+      embeddedConfigured: !app.embeddedEnabled || origins.length > 0,
+    };
   }
 
   // Channel methods
@@ -1823,6 +2397,13 @@ export class DbStorage implements IStorage {
       await db.execute(sql`DELETE FROM live_chat_threads WHERE app_space_id = ${space.id}`);
       await db.execute(sql`DELETE FROM live_presence WHERE app_space_id = ${space.id}`);
 
+      await db.execute(sql`DELETE FROM integration_usage_sessions WHERE integration_app_id IN (SELECT id FROM integration_apps WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM integration_identity_links WHERE integration_app_id IN (SELECT id FROM integration_apps WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM integration_access_codes WHERE integration_app_id IN (SELECT id FROM integration_apps WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM integration_webhook_deliveries WHERE integration_app_id IN (SELECT id FROM integration_apps WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM integration_api_keys WHERE integration_app_id IN (SELECT id FROM integration_apps WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM integration_apps WHERE app_space_id = ${space.id}`);
+
       await db.execute(sql`DELETE FROM ticket_audit_events WHERE app_space_id = ${space.id}`);
       await db.execute(sql`DELETE FROM ticket_policy_events WHERE app_space_id = ${space.id}`);
       await db.execute(sql`DELETE FROM ticket_tiers WHERE golden_ticket_id IN (SELECT id FROM golden_tickets WHERE app_space_id = ${space.id})`);
@@ -1858,6 +2439,9 @@ export class DbStorage implements IStorage {
 
     await db.delete(notifications).where(eq(notifications.userId, userId));
     await db.delete(livePresence).where(eq(livePresence.userId, userId));
+    await db.delete(integrationUsageSessions).where(eq(integrationUsageSessions.firstuserUserId, userId));
+    await db.delete(integrationIdentityLinks).where(eq(integrationIdentityLinks.firstuserUserId, userId));
+    await db.delete(integrationAccessCodes).where(eq(integrationAccessCodes.firstuserUserId, userId));
     await db.delete(liveChatMessages).where(eq(liveChatMessages.senderUserId, userId));
     await db.execute(sql`DELETE FROM live_chat_messages WHERE thread_id IN (SELECT id FROM live_chat_threads WHERE founder_user_id = ${userId} OR member_user_id = ${userId})`);
     await db.execute(sql`DELETE FROM live_chat_threads WHERE founder_user_id = ${userId} OR member_user_id = ${userId}`);

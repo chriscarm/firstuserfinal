@@ -24,9 +24,12 @@ app.set('trust proxy', 1);
 // Security headers and request correlation IDs
 app.use((req, res, next) => {
   const correlationId = (req.headers["x-correlation-id"] as string) || crypto.randomUUID();
+  const embeddableRoute = req.path.startsWith("/i/widget/") || req.path.startsWith("/widget/live-chat");
   res.setHeader("x-correlation-id", correlationId);
   res.setHeader("x-content-type-options", "nosniff");
-  res.setHeader("x-frame-options", "DENY");
+  if (!embeddableRoute) {
+    res.setHeader("x-frame-options", "DENY");
+  }
   res.setHeader("referrer-policy", "strict-origin-when-cross-origin");
   res.setHeader("x-xss-protection", "0");
   res.setHeader("permissions-policy", "camera=(), microphone=(), geolocation=()");
@@ -116,6 +119,7 @@ app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
 // Session middleware setup (direct, replacing Replit Auth)
 const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
+const isProduction = process.env.NODE_ENV === "production";
 const pgStore = connectPg(session);
 const sessionStore = new pgStore({
   conString: process.env.DATABASE_URL,
@@ -130,9 +134,10 @@ const sessionMiddleware = session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: "auto",
+    secure: isProduction ? true : "auto",
     maxAge: sessionTtl,
-    sameSite: "lax",
+    // Embedded chat widgets in partner iframes require cross-site cookies in production.
+    sameSite: isProduction ? "none" : "lax",
   },
 });
 

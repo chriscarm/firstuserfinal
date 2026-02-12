@@ -53,9 +53,13 @@ function readableName(user: { username: string | null; displayName: string | nul
 export function LiveChatWidget({
   appSpaceId,
   enabled,
+  forceOpen = false,
+  embedded = false,
 }: {
   appSpaceId: number;
   enabled: boolean;
+  forceOpen?: boolean;
+  embedded?: boolean;
 }) {
   const { socket, connected } = useChat();
   const queryClient = useQueryClient();
@@ -76,6 +80,7 @@ export function LiveChatWidget({
 
   const threads = threadsQuery.data?.threads || [];
   const totalUnread = threads.reduce((sum, thread) => sum + (thread.unreadCount || 0), 0);
+  const isPanelOpen = forceOpen || open;
 
   useEffect(() => {
     if (!threads.length) {
@@ -154,19 +159,19 @@ export function LiveChatWidget({
     if (!enabled || !socket || !connected || !selectedThreadId) return;
 
     socket.emit("live_chat.join", { threadId: selectedThreadId });
-    if (open) {
+    if (isPanelOpen) {
       socket.emit("live_chat.read", { threadId: selectedThreadId });
     }
 
     return () => {
       socket.emit("live_chat.leave", { threadId: selectedThreadId });
     };
-  }, [enabled, socket, connected, selectedThreadId, open]);
+  }, [enabled, socket, connected, selectedThreadId, isPanelOpen]);
 
   useEffect(() => {
-    if (!open || !socket || !selectedThreadId) return;
+    if (!isPanelOpen || !socket || !selectedThreadId) return;
     socket.emit("live_chat.read", { threadId: selectedThreadId });
-  }, [open, socket, selectedThreadId]);
+  }, [isPanelOpen, socket, selectedThreadId]);
 
   const sendMessageFallbackMutation = useMutation({
     mutationFn: async ({ threadId, body }: { threadId: number; body: string }) => {
@@ -205,8 +210,8 @@ export function LiveChatWidget({
   if (!enabled) return null;
 
   return (
-    <div className="fixed bottom-5 right-5 z-50">
-      {!open ? (
+    <div className={embedded ? "w-full h-full" : "fixed bottom-5 right-5 z-50"}>
+      {!isPanelOpen ? (
         <button
           onClick={() => setOpen(true)}
           className="relative h-12 px-4 rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-lg shadow-violet-900/40 flex items-center gap-2"
@@ -220,18 +225,20 @@ export function LiveChatWidget({
           )}
         </button>
       ) : (
-        <div className="w-[320px] sm:w-[360px] h-[460px] rounded-2xl border border-white/10 bg-black/95 backdrop-blur-xl shadow-2xl shadow-black/60 flex flex-col overflow-hidden">
+        <div className={`${embedded ? "w-full h-full" : "w-[320px] sm:w-[360px] h-[460px]"} rounded-2xl border border-white/10 bg-black/95 backdrop-blur-xl shadow-2xl shadow-black/60 flex flex-col overflow-hidden`}>
           <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
             <div>
               <p className="text-sm font-semibold text-white">Founder Live Chat</p>
               <p className="text-xs text-white/45">Real-time support in app</p>
             </div>
-            <button
-              onClick={() => setOpen(false)}
-              className="h-8 w-8 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white flex items-center justify-center"
-            >
-              <Minimize2 className="w-4 h-4" />
-            </button>
+            {!forceOpen && (
+              <button
+                onClick={() => setOpen(false)}
+                className="h-8 w-8 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white flex items-center justify-center"
+              >
+                <Minimize2 className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
           <div className="px-3 pt-2 flex flex-wrap gap-1 border-b border-white/5">

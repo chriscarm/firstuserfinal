@@ -25,6 +25,7 @@ import Profile from "@/pages/Profile";
 import Settings from "@/pages/Settings";
 import FounderToolsPage from "@/pages/FounderToolsPage";
 import Messages from "@/pages/Messages";
+import WidgetLiveChatPage from "@/pages/WidgetLiveChatPage";
 
 function Router() {
   return (
@@ -60,6 +61,7 @@ function Router() {
           <Messages />
         </ProtectedRoute>
       </Route>
+      <Route path="/widget/live-chat" component={WidgetLiveChatPage} />
       <Route path="/profile">
         <ProtectedRoute>
           <Profile />

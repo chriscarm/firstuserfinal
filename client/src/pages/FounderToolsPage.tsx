@@ -1,14 +1,14 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Megaphone, BarChart3, Award, Loader2, Home, Users, Upload, Save, Plus, Trash2, CheckCircle2, X, Radio } from "lucide-react";
+import { ArrowLeft, Megaphone, BarChart3, Award, Loader2, Home, Users, Upload, Save, Plus, Trash2, CheckCircle2, X, Radio, PlugZap, Copy, Globe, Smartphone, Link2, ShieldCheck, Sparkles } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { AnnouncementsPanel } from "@/components/founder/AnnouncementsPanel";
 import { PollsPanel } from "@/components/founder/PollsPanel";
 import { BadgeAwardsPanel } from "@/components/founder/BadgeAwardsPanel";
 import { LiveNowPanel } from "@/components/founder/LiveNowPanel";
 
-type ToolsTab = "homepage" | "announcements" | "polls" | "badges" | "members" | "live-now" | "golden-ticket";
+type ToolsTab = "homepage" | "announcements" | "polls" | "badges" | "members" | "live-now" | "integrate" | "golden-ticket";
 
 interface Founder {
   name: string;
@@ -190,6 +190,7 @@ export default function FounderToolsPage() {
     { id: "badges", label: "Badges", icon: Award },
     { id: "members", label: "Members", icon: Users },
     { id: "live-now", label: "Live Now", icon: Radio },
+    { id: "integrate", label: "Integrate", icon: PlugZap },
     { id: "golden-ticket", label: "Golden Ticket", icon: Award },
   ];
 
@@ -295,9 +296,466 @@ export default function FounderToolsPage() {
         {activeTab === "live-now" && (
           <LiveNowPanel appSpaceId={activeAppSpace.id} />
         )}
+        {activeTab === "integrate" && (
+          <IntegrationsManager appSpaceId={activeAppSpace.id} appSpaceName={activeAppSpace.name} />
+        )}
         {activeTab === "golden-ticket" && (
           <GoldenTicketManager appSpaceId={activeAppSpace.id} />
         )}
+      </div>
+    </div>
+  );
+}
+
+type IntegrationStack = "web" | "react-native";
+
+interface IntegrationSetupPayload {
+  id: number;
+  appSpaceId: number;
+  publicAppId: string;
+  redirectEnabled: boolean;
+  embeddedEnabled: boolean;
+  webRedirectUrl: string | null;
+  mobileDeepLinkUrl: string | null;
+  webhookUrl: string | null;
+  allowedOrigins: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface IntegrationSetupResponse {
+  setup: IntegrationSetupPayload;
+  hostedJoinUrl: string;
+  activeApiKey: { keyId: string; lastFour: string; createdAt: string } | null;
+  health: {
+    hasApiKey: boolean;
+    hasWebhookUrl: boolean;
+    redirectConfigured: boolean;
+    embeddedConfigured: boolean;
+  };
+}
+
+interface IntegrationSetupPackResponse {
+  stack: IntegrationStack;
+  setupPack: {
+    masterPrompt: string;
+    fallbackManualSteps: string[];
+    verificationChecklist: string[];
+  };
+  hostedJoinUrl: string;
+}
+
+function IntegrationsManager({ appSpaceId, appSpaceName }: { appSpaceId: number; appSpaceName: string }) {
+  const queryClient = useQueryClient();
+  const [stack, setStack] = useState<IntegrationStack>("web");
+  const [redirectEnabled, setRedirectEnabled] = useState(true);
+  const [embeddedEnabled, setEmbeddedEnabled] = useState(false);
+  const [webRedirectUrl, setWebRedirectUrl] = useState("");
+  const [mobileDeepLinkUrl, setMobileDeepLinkUrl] = useState("");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [allowedOriginsText, setAllowedOriginsText] = useState("");
+  const [copyStatus, setCopyStatus] = useState<string>("");
+  const [freshApiKey, setFreshApiKey] = useState<string | null>(null);
+
+  const setupQuery = useQuery<IntegrationSetupResponse>({
+    queryKey: ["integration-setup", appSpaceId],
+    queryFn: async () => {
+      const res = await fetch(`/api/integrations/apps/${appSpaceId}/setup`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load integration setup");
+      return res.json();
+    },
+  });
+
+  const healthQuery = useQuery<{ healthy: boolean; warnings: string[] }>({
+    queryKey: ["integration-health", appSpaceId],
+    queryFn: async () => {
+      const res = await fetch(`/api/integrations/apps/${appSpaceId}/health`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load integration health");
+      return res.json();
+    },
+    refetchInterval: 20_000,
+  });
+
+  const usageSummaryQuery = useQuery<{
+    sessionsCount: number;
+    totalMinutes: number;
+    avgSessionMinutes: number;
+    liveNowCount: number;
+    pendingCandidateCount: number;
+    approvedCandidateCount: number;
+  }>({
+    queryKey: ["integration-usage-summary", appSpaceId],
+    queryFn: async () => {
+      const res = await fetch(`/api/integrations/apps/${appSpaceId}/usage-summary`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load integration usage summary");
+      return res.json();
+    },
+    refetchInterval: 30_000,
+  });
+
+  const candidatesQuery = useQuery<{ status: "pending" | "approved"; candidates: Array<{
+    userId: string;
+    username: string | null;
+    displayName: string | null;
+    sessionsCount: number;
+    totalMinutes: number;
+    avgSessionMinutes: number;
+  }> }>({
+    queryKey: ["integration-engagement-candidates", appSpaceId],
+    queryFn: async () => {
+      const res = await fetch(`/api/integrations/apps/${appSpaceId}/engagement-candidates?status=pending`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load candidate analytics");
+      return res.json();
+    },
+    refetchInterval: 30_000,
+  });
+
+  const setupPackQuery = useQuery<IntegrationSetupPackResponse>({
+    queryKey: ["integration-setup-pack", appSpaceId, stack],
+    queryFn: async () => {
+      const res = await fetch(`/api/integrations/apps/${appSpaceId}/setup-pack?stack=${stack}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load setup pack");
+      return res.json();
+    },
+  });
+
+  useEffect(() => {
+    const setup = setupQuery.data?.setup;
+    if (!setup) return;
+    setRedirectEnabled(setup.redirectEnabled);
+    setEmbeddedEnabled(setup.embeddedEnabled);
+    setWebRedirectUrl(setup.webRedirectUrl || "");
+    setMobileDeepLinkUrl(setup.mobileDeepLinkUrl || "");
+    setWebhookUrl(setup.webhookUrl || "");
+    setAllowedOriginsText((setup.allowedOrigins || []).join(", "));
+  }, [setupQuery.data?.setup]);
+
+  const saveSetupMutation = useMutation({
+    mutationFn: async () => {
+      const body = {
+        redirectEnabled,
+        embeddedEnabled,
+        webRedirectUrl: webRedirectUrl.trim() || null,
+        mobileDeepLinkUrl: mobileDeepLinkUrl.trim() || null,
+        webhookUrl: webhookUrl.trim() || null,
+        allowedOrigins: allowedOriginsText
+          .split(",")
+          .map((origin) => origin.trim())
+          .filter(Boolean),
+      };
+      const res = await fetch(`/api/integrations/apps/${appSpaceId}/setup`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.message || "Failed to save setup");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["integration-setup", appSpaceId] });
+      void queryClient.invalidateQueries({ queryKey: ["integration-health", appSpaceId] });
+      void queryClient.invalidateQueries({ queryKey: ["integration-setup-pack", appSpaceId] });
+    },
+  });
+
+  const rotateKeyMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/integrations/apps/${appSpaceId}/api-keys/rotate`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.message || "Failed to rotate API key");
+      }
+      return res.json() as Promise<{ key: { apiKey: string } }>;
+    },
+    onSuccess: (payload) => {
+      setFreshApiKey(payload.key.apiKey);
+      void queryClient.invalidateQueries({ queryKey: ["integration-setup", appSpaceId] });
+      void queryClient.invalidateQueries({ queryKey: ["integration-health", appSpaceId] });
+      void queryClient.invalidateQueries({ queryKey: ["integration-setup-pack", appSpaceId] });
+    },
+  });
+
+  const copyToClipboard = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopyStatus(`${label} copied`);
+      window.setTimeout(() => setCopyStatus(""), 2000);
+    } catch {
+      setCopyStatus(`Could not copy ${label.toLowerCase()}`);
+      window.setTimeout(() => setCopyStatus(""), 2000);
+    }
+  };
+
+  const setupPack = setupPackQuery.data?.setupPack;
+  const hostedJoinUrl = setupQuery.data?.hostedJoinUrl || setupPackQuery.data?.hostedJoinUrl;
+
+  return (
+    <div className="space-y-6">
+      <div className="glass-panel p-6">
+        <h3 className="text-lg font-bold text-white mb-1 flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-violet-300" />
+          No-Code Integrate Wizard
+        </h3>
+        <p className="text-sm text-white/65">
+          Configure once, then copy one master prompt into your AI coding tool to implement integration for {appSpaceName}.
+        </p>
+        {copyStatus && <p className="text-xs text-emerald-300 mt-3">{copyStatus}</p>}
+      </div>
+
+      <div className="glass-panel p-6 space-y-4">
+        <h4 className="text-white font-semibold">Step 1: App Endpoints</h4>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <label className="space-y-2">
+            <span className="text-xs uppercase tracking-wide text-white/50 flex items-center gap-2">
+              <Globe className="h-3 w-3" />
+              Web Redirect URL
+            </span>
+            <input
+              type="url"
+              value={webRedirectUrl}
+              onChange={(event) => setWebRedirectUrl(event.target.value)}
+              placeholder="https://yourapp.com/auth/firstuser"
+              className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-3 text-white focus:outline-none focus:border-violet-500/50"
+            />
+          </label>
+          <label className="space-y-2">
+            <span className="text-xs uppercase tracking-wide text-white/50 flex items-center gap-2">
+              <Smartphone className="h-3 w-3" />
+              Mobile Deep Link
+            </span>
+            <input
+              type="text"
+              value={mobileDeepLinkUrl}
+              onChange={(event) => setMobileDeepLinkUrl(event.target.value)}
+              placeholder="yourapp://firstuser/access"
+              className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-3 text-white focus:outline-none focus:border-violet-500/50"
+            />
+          </label>
+          <label className="space-y-2 md:col-span-2">
+            <span className="text-xs uppercase tracking-wide text-white/50 flex items-center gap-2">
+              <Link2 className="h-3 w-3" />
+              Partner Webhook URL
+            </span>
+            <input
+              type="url"
+              value={webhookUrl}
+              onChange={(event) => setWebhookUrl(event.target.value)}
+              placeholder="https://yourapp.com/api/webhooks/firstuser"
+              className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-3 text-white focus:outline-none focus:border-violet-500/50"
+            />
+          </label>
+          <label className="space-y-2 md:col-span-2">
+            <span className="text-xs uppercase tracking-wide text-white/50">Allowed Origins (for embedded mode)</span>
+            <input
+              type="text"
+              value={allowedOriginsText}
+              onChange={(event) => setAllowedOriginsText(event.target.value)}
+              placeholder="https://yourapp.com, https://beta.yourapp.com"
+              className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-3 text-white focus:outline-none focus:border-violet-500/50"
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="flex items-center gap-3 p-3 rounded-xl border border-white/10 bg-white/[0.03]">
+            <input
+              type="checkbox"
+              checked={redirectEnabled}
+              onChange={(event) => setRedirectEnabled(event.target.checked)}
+              className="h-4 w-4 accent-violet-500"
+            />
+            <span className="text-sm text-white">Enable Redirect Mode</span>
+          </label>
+          <label className="flex items-center gap-3 p-3 rounded-xl border border-white/10 bg-white/[0.03]">
+            <input
+              type="checkbox"
+              checked={embeddedEnabled}
+              onChange={(event) => setEmbeddedEnabled(event.target.checked)}
+              className="h-4 w-4 accent-violet-500"
+            />
+            <span className="text-sm text-white">Enable Embedded API Mode</span>
+          </label>
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <button
+            onClick={() => saveSetupMutation.mutate()}
+            disabled={saveSetupMutation.isPending}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white font-medium disabled:opacity-60"
+          >
+            {saveSetupMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Save Setup
+          </button>
+          {hostedJoinUrl && (
+            <button
+              onClick={() => void copyToClipboard(hostedJoinUrl, "Hosted Join URL")}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-white/20 text-white/80 hover:bg-white/[0.05]"
+            >
+              <Copy className="h-4 w-4" />
+              Copy Hosted Join URL
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="glass-panel p-6 space-y-3">
+        <h4 className="text-white font-semibold">Step 2: API Key</h4>
+        <p className="text-sm text-white/65">
+          Generate one API key and store it in your partner backend. Do not put this key in frontend/mobile code.
+        </p>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <button
+            onClick={() => rotateKeyMutation.mutate()}
+            disabled={rotateKeyMutation.isPending}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-white/10 text-white hover:bg-white/15 disabled:opacity-60"
+          >
+            {rotateKeyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+            Rotate Key
+          </button>
+          {setupQuery.data?.activeApiKey && (
+            <p className="text-xs text-white/60">
+              Active key: <span className="text-white">{setupQuery.data.activeApiKey.keyId}</span> • ending {setupQuery.data.activeApiKey.lastFour}
+            </p>
+          )}
+        </div>
+        {freshApiKey && (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
+            <p className="text-xs text-emerald-200 mb-2">Copy now. This is shown only once.</p>
+            <div className="flex items-center gap-2">
+              <code className="text-[11px] text-emerald-100 break-all">{freshApiKey}</code>
+              <button
+                onClick={() => void copyToClipboard(freshApiKey, "API key")}
+                className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-100 text-xs"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="glass-panel p-6 space-y-4">
+        <h4 className="text-white font-semibold">Step 3: Copy To AI</h4>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setStack("web")}
+            className={`px-3 py-2 rounded-lg text-sm ${stack === "web" ? "bg-violet-500 text-white" : "bg-white/5 text-white/70"}`}
+          >
+            Web
+          </button>
+          <button
+            onClick={() => setStack("react-native")}
+            className={`px-3 py-2 rounded-lg text-sm ${stack === "react-native" ? "bg-violet-500 text-white" : "bg-white/5 text-white/70"}`}
+          >
+            React Native
+          </button>
+        </div>
+
+        {setupPackQuery.isLoading ? (
+          <div className="py-10 flex items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-white/40" />
+          </div>
+        ) : setupPack ? (
+          <>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={() => void copyToClipboard(setupPack.masterPrompt, "Master Prompt")}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white font-medium"
+              >
+                <Copy className="h-4 w-4" />
+                Copy Master Prompt
+              </button>
+              <button
+                onClick={() => void copyToClipboard(setupPack.fallbackManualSteps.join("\n"), "Fallback Manual Steps")}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-white/20 text-white/80 hover:bg-white/[0.05]"
+              >
+                <Copy className="h-4 w-4" />
+                Copy Fallback Manual Steps
+              </button>
+              <button
+                onClick={() => void copyToClipboard(setupPack.verificationChecklist.join("\n"), "Verification Checklist")}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-white/20 text-white/80 hover:bg-white/[0.05]"
+              >
+                <Copy className="h-4 w-4" />
+                Copy Verification Checklist
+              </button>
+            </div>
+            <textarea
+              readOnly
+              value={setupPack.masterPrompt}
+              className="w-full min-h-[220px] bg-black/40 border border-white/10 rounded-xl p-3 text-xs text-white/80 focus:outline-none"
+            />
+          </>
+        ) : (
+          <p className="text-sm text-white/60">Setup pack unavailable right now.</p>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="glass-panel p-4 text-center">
+          <p className="text-2xl font-bold text-white">{usageSummaryQuery.data?.sessionsCount ?? 0}</p>
+          <p className="text-xs text-white/60">Sessions</p>
+        </div>
+        <div className="glass-panel p-4 text-center">
+          <p className="text-2xl font-bold text-white">{usageSummaryQuery.data?.totalMinutes ?? 0}</p>
+          <p className="text-xs text-white/60">Minutes Used</p>
+        </div>
+        <div className="glass-panel p-4 text-center">
+          <p className="text-2xl font-bold text-white">{usageSummaryQuery.data?.avgSessionMinutes ?? 0}</p>
+          <p className="text-xs text-white/60">Avg Session (min)</p>
+        </div>
+        <div className="glass-panel p-4 text-center">
+          <p className="text-2xl font-bold text-white">{usageSummaryQuery.data?.liveNowCount ?? 0}</p>
+          <p className="text-xs text-white/60">Live Now</p>
+        </div>
+      </div>
+
+      <div className="glass-panel p-6">
+        <h4 className="text-white font-semibold mb-2">Health Check</h4>
+        {healthQuery.isLoading ? (
+          <p className="text-sm text-white/50">Checking integration health...</p>
+        ) : (
+          <>
+            <p className={`text-sm ${healthQuery.data?.healthy ? "text-emerald-300" : "text-amber-300"}`}>
+              {healthQuery.data?.healthy ? "Integration is healthy." : "Integration needs attention before go-live."}
+            </p>
+            {!healthQuery.data?.healthy && (
+              <ul className="mt-3 space-y-1 text-xs text-white/65">
+                {(healthQuery.data?.warnings || []).map((warning) => (
+                  <li key={warning}>• {warning}</li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="glass-panel p-6">
+        <h4 className="text-white font-semibold mb-2">Approval Candidates (Pending Users)</h4>
+        <p className="text-xs text-white/60 mb-4">
+          Use this to prioritize approvals based on real usage before users are approved.
+        </p>
+        <div className="space-y-2">
+          {(candidatesQuery.data?.candidates || []).slice(0, 10).map((candidate) => (
+            <div key={candidate.userId} className="rounded-lg border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-white truncate">{candidate.displayName || candidate.username || "Unnamed user"}</p>
+                <p className="text-xs text-white/50">{candidate.sessionsCount} sessions • {candidate.totalMinutes} min total</p>
+              </div>
+              <p className="text-xs text-white/70">{candidate.avgSessionMinutes} min avg</p>
+            </div>
+          ))}
+          {(candidatesQuery.data?.candidates || []).length === 0 && (
+            <p className="text-sm text-white/50">No pending-user engagement yet.</p>
+          )}
+        </div>
       </div>
     </div>
   );

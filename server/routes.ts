@@ -258,10 +258,440 @@ async function createAndEmitNotification(input: {
   return notification;
 }
 
+const INTEGRATION_ACCESS_CODE_TTL_MS = 10 * 60 * 1000;
+const INTEGRATION_WIDGET_TOKEN_TTL_MS = 15 * 60 * 1000;
+const INTEGRATION_WEBHOOK_SIGNING_SECRET = process.env.INTEGRATION_WEBHOOK_SIGNING_SECRET || process.env.SESSION_SECRET || "dev-integration-secret";
+
+function hashSecret(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function safeTimingEqual(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  if (aBuf.length !== bBuf.length) return false;
+  return crypto.timingSafeEqual(aBuf, bBuf);
+}
+
+function getBaseUrl(req: Request): string {
+  if (process.env.PUBLIC_APP_URL) {
+    return process.env.PUBLIC_APP_URL.replace(/\/+$/, "");
+  }
+  const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
+  const host = req.get("host") || "localhost:5000";
+  return `${proto}://${host}`.replace(/\/+$/, "");
+}
+
+function parseAllowedOrigins(input: unknown): string[] {
+  if (!input) return [];
+  if (Array.isArray(input)) {
+    return Array.from(new Set(input.map((item) => String(item).trim()).filter(Boolean)));
+  }
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return Array.from(new Set(parsed.map((item) => String(item).trim()).filter(Boolean)));
+        }
+      } catch {
+        // Fall through to comma parsing.
+      }
+    }
+    return Array.from(new Set(input.split(",").map((item) => item.trim()).filter(Boolean)));
+  }
+  return [];
+}
+
+function parseIntegrationApiCredential(req: Request): { keyId: string; secret: string } | null {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.slice("Bearer ".length).trim();
+    const parts = token.split(".");
+    if (parts.length >= 2) {
+      const keyId = parts[0].trim();
+      const secret = parts.slice(1).join(".").trim();
+      if (keyId && secret) return { keyId, secret };
+    }
+  }
+
+  const keyIdHeader = req.headers["x-firstuser-key-id"];
+  const secretHeader = req.headers["x-firstuser-secret"];
+  const keyId = typeof keyIdHeader === "string" ? keyIdHeader.trim() : "";
+  const secret = typeof secretHeader === "string" ? secretHeader.trim() : "";
+  if (keyId && secret) {
+    return { keyId, secret };
+  }
+  return null;
+}
+
+async function authenticateIntegrationRequest(req: Request): Promise<{
+  integrationAppId: number;
+  appSpaceId: number;
+  publicAppId: string;
+}> {
+  const creds = parseIntegrationApiCredential(req);
+  if (!creds) {
+    throw Object.assign(new Error("Missing integration API credentials"), { status: 401 });
+  }
+
+  const key = await storage.getActiveIntegrationApiKeyByKeyId(creds.keyId);
+  if (!key) {
+    throw Object.assign(new Error("Invalid integration key"), { status: 401 });
+  }
+
+  const receivedHash = hashSecret(creds.secret);
+  if (!safeTimingEqual(receivedHash, key.secretHash)) {
+    throw Object.assign(new Error("Invalid integration secret"), { status: 401 });
+  }
+
+  const integrationApp = await storage.getIntegrationAppById(key.integrationAppId);
+  if (!integrationApp) {
+    throw Object.assign(new Error("Integration app not found"), { status: 404 });
+  }
+
+  return {
+    integrationAppId: integrationApp.id,
+    appSpaceId: integrationApp.appSpaceId,
+    publicAppId: integrationApp.publicAppId,
+  };
+}
+
+function signWebhookPayload(payload: string): string {
+  return crypto.createHmac("sha256", INTEGRATION_WEBHOOK_SIGNING_SECRET).update(payload).digest("hex");
+}
+
+function createWidgetToken(payload: {
+  integrationAppId: number;
+  firstuserUserId: string;
+  appSpaceId: number;
+  exp: number;
+}): string {
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", INTEGRATION_WEBHOOK_SIGNING_SECRET).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+
+function verifyWidgetToken(token: string): {
+  integrationAppId: number;
+  firstuserUserId: string;
+  appSpaceId: number;
+  exp: number;
+} | null {
+  const [body, sig] = token.split(".");
+  if (!body || !sig) return null;
+  const expected = crypto.createHmac("sha256", INTEGRATION_WEBHOOK_SIGNING_SECRET).update(body).digest("base64url");
+  if (!safeTimingEqual(sig, expected)) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as {
+      integrationAppId: number;
+      firstuserUserId: string;
+      appSpaceId: number;
+      exp: number;
+    };
+    if (!payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function buildUrl(base: string, params: Record<string, string | number | undefined>): string {
+  const url = new URL(base);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url.toString();
+}
+
+async function issueIntegrationAccessCode(options: {
+  integrationAppId: number;
+  appSpaceId: number;
+  firstuserUserId: string;
+}): Promise<{ code: string; expiresAt: Date }> {
+  const code = crypto.randomBytes(24).toString("hex");
+  const expiresAt = new Date(Date.now() + INTEGRATION_ACCESS_CODE_TTL_MS);
+  await storage.createIntegrationAccessCode({
+    integrationAppId: options.integrationAppId,
+    firstuserUserId: options.firstuserUserId,
+    appSpaceId: options.appSpaceId,
+    codeHash: hashSecret(code),
+    status: "issued",
+    expiresAt,
+  });
+  return { code, expiresAt };
+}
+
+async function sendIntegrationWebhook(options: {
+  integrationAppId: number;
+  webhookUrl: string | null;
+  eventType: string;
+  payload: Record<string, unknown>;
+}) {
+  if (!options.webhookUrl) return;
+
+  const body = JSON.stringify({
+    type: options.eventType,
+    timestamp: new Date().toISOString(),
+    data: options.payload,
+  });
+  const signature = signWebhookPayload(body);
+
+  const delivery = await storage.createIntegrationWebhookDelivery({
+    integrationAppId: options.integrationAppId,
+    eventType: options.eventType,
+    payload: body,
+    signature,
+    attempt: 1,
+    status: "pending",
+    nextRetryAt: null,
+  });
+
+  try {
+    const response = await fetch(options.webhookUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-firstuser-signature": signature,
+      },
+      body,
+    });
+
+    if (response.ok) {
+      await storage.updateIntegrationWebhookDeliveryStatus(delivery.id, {
+        status: "delivered",
+        attempt: 1,
+        nextRetryAt: null,
+      });
+      return;
+    }
+
+    await storage.updateIntegrationWebhookDeliveryStatus(delivery.id, {
+      status: "failed",
+      attempt: 1,
+      nextRetryAt: new Date(Date.now() + 60_000),
+    });
+  } catch {
+    await storage.updateIntegrationWebhookDeliveryStatus(delivery.id, {
+      status: "failed",
+      attempt: 1,
+      nextRetryAt: new Date(Date.now() + 60_000),
+    });
+  }
+}
+
+function buildIntegrationSetupPack(options: {
+  appName: string;
+  appSpaceSlug: string;
+  publicAppId: string;
+  stack: "web" | "react-native";
+  baseUrl: string;
+  webRedirectUrl: string | null;
+  mobileDeepLinkUrl: string | null;
+  redirectEnabled: boolean;
+  embeddedEnabled: boolean;
+  webhookUrl: string | null;
+  hasApiKey: boolean;
+  keyId?: string;
+}): {
+  masterPrompt: string;
+  fallbackManualSteps: string[];
+  verificationChecklist: string[];
+} {
+  const integrationApiBase = `${options.baseUrl}/api/integration/v1`;
+  const hostedJoinUrl = `${options.baseUrl}/i/${options.publicAppId}/join`;
+  const platformNotes = options.stack === "web"
+    ? "Use browser redirects and standard fetch calls from your backend."
+    : "Use deep links + your mobile backend for all FirstUser API calls (never from client app).";
+  const keyInstruction = options.hasApiKey && options.keyId
+    ? `Use API key id ${options.keyId} and the secret shown in Founder Tools when authenticating with FirstUser.`
+    : "First generate an API key in FirstUser Founder Tools > Integrate, then use it for all server-to-server calls.";
+
+  const masterPrompt = `You are implementing FirstUser integration for ${options.appName}.
+
+Goal:
+- Add FirstUser waitlist + approval access + live usage heartbeat + founder chat support.
+- Target stack: ${options.stack}.
+- ${platformNotes}
+
+FirstUser config:
+- Base URL: ${options.baseUrl}
+- Public App ID: ${options.publicAppId}
+- Hosted Join URL: ${hostedJoinUrl}
+- Redirect enabled: ${options.redirectEnabled}
+- Embedded enabled: ${options.embeddedEnabled}
+- Partner web redirect URL: ${options.webRedirectUrl || "(not set yet)"}
+- Partner mobile deep link URL: ${options.mobileDeepLinkUrl || "(not set yet)"}
+- Webhook URL: ${options.webhookUrl || "(not set yet)"}
+- ${keyInstruction}
+
+Implement exactly:
+1) Add a "Join Waitlist" button that points to ${hostedJoinUrl} (redirect mode).
+2) If using embedded mode, add backend endpoint that calls ${integrationApiBase}/waitlist/start and then redirects user to the returned continuationUrl.
+3) On approval deep-link/access code, call backend to exchange code with ${integrationApiBase}/access/exchange.
+4) Map external user id to returned FirstUser user id.
+5) Start heartbeat every 15s from backend via ${integrationApiBase}/usage/heartbeat with status live/idle/offline and clientPlatform.
+6) Send plan tier updates to ${integrationApiBase}/users/:externalUserId/plan whenever billing tier changes.
+7) Request hosted chat widget token from ${integrationApiBase}/chat/widget-token and mount iframe/webview to the returned widgetUrl.
+8) Do not expose API secrets in frontend/mobile code. Backend only.
+
+Output required:
+- Provide files changed.
+- Provide the exact environment variables needed.
+- Provide a short test plan proving: join flow, access exchange, heartbeat, and chat widget load.
+`;
+
+  const fallbackManualSteps = [
+    "Create or rotate an integration API key in Founder Tools > Integrate.",
+    `Add a Join Waitlist button to your app linking to ${hostedJoinUrl}.`,
+    "When users are approved, consume access code on your backend via /api/integration/v1/access/exchange.",
+    "Store external_user_id <-> firstuser_user_id mapping in your database.",
+    "Send usage heartbeat every 15 seconds while app is active.",
+    "Mount hosted chat widget URL returned from /api/integration/v1/chat/widget-token.",
+  ];
+
+  const verificationChecklist = [
+    "Join Waitlist button opens FirstUser join flow.",
+    "Approved user can one-click into app and exchange access code successfully.",
+    "Heartbeat appears in Founder Tools Live Now within 20 seconds.",
+    "User disappears from live list within 45 seconds after app close.",
+    "Founder can send chat message and user receives it in hosted widget.",
+    "No phone/email appears in founder live user or chat payloads.",
+  ];
+
+  return {
+    masterPrompt,
+    fallbackManualSteps,
+    verificationChecklist,
+  };
+}
+
+async function handleIntegrationMembershipEvent(options: {
+  req: Request;
+  appSpaceId: number;
+  appSpaceSlug: string;
+  appSpaceName: string;
+  userId: string;
+  status: "approved" | "rejected";
+}) {
+  const integrationApp = await storage.getIntegrationAppByAppSpaceId(options.appSpaceId);
+  if (!integrationApp) {
+    return {
+      browserAccessUrl: null as string | null,
+      mobileAccessUrl: null as string | null,
+      expiresAt: null as Date | null,
+    };
+  }
+
+  const baseUrl = getBaseUrl(options.req);
+  const member = await storage.getUser(options.userId);
+  const safeUser = {
+    id: member?.id ?? options.userId,
+    username: member?.username ?? null,
+    displayName: member?.displayName ?? null,
+    avatarUrl: member?.avatarUrl ?? null,
+  };
+
+  if (options.status === "rejected") {
+    await sendIntegrationWebhook({
+      integrationAppId: integrationApp.id,
+      webhookUrl: integrationApp.webhookUrl,
+      eventType: "waitlist.member.rejected",
+      payload: {
+        appSpaceId: options.appSpaceId,
+        appSpaceSlug: options.appSpaceSlug,
+        appSpaceName: options.appSpaceName,
+        user: safeUser,
+      },
+    });
+
+    return {
+      browserAccessUrl: null,
+      mobileAccessUrl: null,
+      expiresAt: null,
+    };
+  }
+
+  const issued = await issueIntegrationAccessCode({
+    integrationAppId: integrationApp.id,
+    appSpaceId: options.appSpaceId,
+    firstuserUserId: options.userId,
+  });
+
+  const browserAccessUrl = buildUrl(`${baseUrl}/i/access/${issued.code}`, {
+    platform: "web",
+    publicAppId: integrationApp.publicAppId,
+  });
+  const mobileAccessUrl = buildUrl(`${baseUrl}/i/access/${issued.code}`, {
+    platform: "mobile",
+    publicAppId: integrationApp.publicAppId,
+  });
+
+  await sendIntegrationWebhook({
+    integrationAppId: integrationApp.id,
+    webhookUrl: integrationApp.webhookUrl,
+    eventType: "waitlist.member.approved",
+    payload: {
+      appSpaceId: options.appSpaceId,
+      appSpaceSlug: options.appSpaceSlug,
+      appSpaceName: options.appSpaceName,
+      user: safeUser,
+      access: {
+        browserAccessUrl,
+        mobileAccessUrl,
+        expiresAt: issued.expiresAt.toISOString(),
+      },
+    },
+  });
+
+  await sendIntegrationWebhook({
+    integrationAppId: integrationApp.id,
+    webhookUrl: integrationApp.webhookUrl,
+    eventType: "integration.access_code.issued",
+    payload: {
+      appSpaceId: options.appSpaceId,
+      appSpaceSlug: options.appSpaceSlug,
+      appSpaceName: options.appSpaceName,
+      user: safeUser,
+      access: {
+        browserAccessUrl,
+        mobileAccessUrl,
+        expiresAt: issued.expiresAt.toISOString(),
+      },
+    },
+  });
+
+  return {
+    browserAccessUrl,
+    mobileAccessUrl,
+    expiresAt: issued.expiresAt,
+  };
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  const requireIntegrationApiKey = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const auth = await authenticateIntegrationRequest(req);
+      (req as Request & {
+        integrationAuth?: {
+          integrationAppId: number;
+          appSpaceId: number;
+          publicAppId: string;
+        };
+      }).integrationAuth = auth;
+      next();
+    } catch (error: any) {
+      const status = typeof error?.status === "number" ? error.status : 401;
+      return res.status(status).json({ message: error?.message || "Integration auth failed" });
+    }
+  };
 
   app.get("/api/stats/public", async (req, res) => {
     try {
@@ -1515,6 +1945,15 @@ export async function registerRoutes(
         await storage.updateWaitlistMemberStatus(appSpaceId, targetUserId, status);
         
         if (status === "approved") {
+          const integrationAccess = await handleIntegrationMembershipEvent({
+            req,
+            appSpaceId,
+            appSpaceSlug: appSpace.slug,
+            appSpaceName: appSpace.name,
+            userId: targetUserId,
+            status: "approved",
+          });
+
           await storage.setWaitlistMemberActive(appSpaceId, targetUserId, true);
 
           if (appSpace.slug === "firstuser") {
@@ -1529,6 +1968,11 @@ export async function registerRoutes(
               appSpaceId,
               appSpaceName: appSpace.name,
               appSpaceSlug: appSpace.slug,
+              integrationAccess: integrationAccess.browserAccessUrl ? {
+                browserAccessUrl: integrationAccess.browserAccessUrl,
+                mobileAccessUrl: integrationAccess.mobileAccessUrl,
+                expiresAt: integrationAccess.expiresAt?.toISOString() ?? null,
+              } : null,
             },
           });
 
@@ -1538,11 +1982,23 @@ export async function registerRoutes(
             const message = appSpace.slug === "firstuser"
               ? `You've been approved to create on FirstUser! 🎉 Start building your waitlist now.`
               : `🎉 You've been approved to ${appSpace.name}! You now have full access.`;
-            await sendSMS(user.phone, message);
+            const withAccess = integrationAccess.browserAccessUrl
+              ? `${message} Access now: ${integrationAccess.browserAccessUrl}`
+              : message;
+            await sendSMS(user.phone, withAccess);
           }
         }
 
         if (status === "rejected") {
+          await handleIntegrationMembershipEvent({
+            req,
+            appSpaceId,
+            appSpaceSlug: appSpace.slug,
+            appSpaceName: appSpace.name,
+            userId: targetUserId,
+            status: "rejected",
+          });
+
           // Create in-app notification for rejection
           await createAndEmitNotification({
             userId: targetUserId,
@@ -1610,6 +2066,15 @@ export async function registerRoutes(
           await storage.updateWaitlistMemberStatus(appSpaceId, userId, status);
           
           if (status === "approved") {
+            const integrationAccess = await handleIntegrationMembershipEvent({
+              req,
+              appSpaceId,
+              appSpaceSlug: appSpace.slug,
+              appSpaceName: appSpace.name,
+              userId,
+              status: "approved",
+            });
+
             await storage.setWaitlistMemberActive(appSpaceId, userId, true);
 
             if (appSpace.slug === "firstuser") {
@@ -1624,6 +2089,11 @@ export async function registerRoutes(
                 appSpaceId,
                 appSpaceName: appSpace.name,
                 appSpaceSlug: appSpace.slug,
+                integrationAccess: integrationAccess.browserAccessUrl ? {
+                  browserAccessUrl: integrationAccess.browserAccessUrl,
+                  mobileAccessUrl: integrationAccess.mobileAccessUrl,
+                  expiresAt: integrationAccess.expiresAt?.toISOString() ?? null,
+                } : null,
               },
             });
 
@@ -1633,11 +2103,23 @@ export async function registerRoutes(
               const message = appSpace.slug === "firstuser"
                 ? `You've been approved to create on FirstUser! 🎉`
                 : `🎉 You've been approved to ${appSpace.name}!`;
-              await sendSMS(user.phone, message);
+              const withAccess = integrationAccess.browserAccessUrl
+                ? `${message} Access now: ${integrationAccess.browserAccessUrl}`
+                : message;
+              await sendSMS(user.phone, withAccess);
             }
           }
 
           if (status === "rejected") {
+            await handleIntegrationMembershipEvent({
+              req,
+              appSpaceId,
+              appSpaceSlug: appSpace.slug,
+              appSpaceName: appSpace.name,
+              userId,
+              status: "rejected",
+            });
+
             // Create in-app notification for rejection
             await createAndEmitNotification({
               userId,
@@ -2517,6 +2999,745 @@ export async function registerRoutes(
         activePolls: activePollsCount,
         totalBadges: badges.length,
         verifiedPhoneUsers: verifiedPhoneCount,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  // ============ NO-CODE INTEGRATION SETUP (FOUNDER AUTH) ============
+
+  app.get("/api/integrations/apps/:id/setup", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = Number(req.params.id);
+      if (!Number.isInteger(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid app ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to manage integration setup",
+      });
+      if (!canManage) return;
+
+      const integration = await storage.getIntegrationAppByAppSpaceId(appSpaceId)
+        || await storage.createOrUpdateIntegrationApp({ appSpaceId });
+      const activeKey = await storage.getActiveIntegrationApiKeyForApp(integration.id);
+      const health = await storage.getIntegrationHealth(integration.id);
+      const baseUrl = getBaseUrl(req);
+
+      return res.json({
+        setup: {
+          id: integration.id,
+          appSpaceId: integration.appSpaceId,
+          publicAppId: integration.publicAppId,
+          redirectEnabled: integration.redirectEnabled,
+          embeddedEnabled: integration.embeddedEnabled,
+          webRedirectUrl: integration.webRedirectUrl,
+          mobileDeepLinkUrl: integration.mobileDeepLinkUrl,
+          webhookUrl: integration.webhookUrl,
+          allowedOrigins: parseAllowedOrigins(integration.allowedOrigins),
+          createdAt: integration.createdAt,
+          updatedAt: integration.updatedAt,
+        },
+        hostedJoinUrl: `${baseUrl}/i/${integration.publicAppId}/join`,
+        activeApiKey: activeKey ? {
+          keyId: activeKey.keyId,
+          lastFour: activeKey.lastFour,
+          createdAt: activeKey.createdAt,
+        } : null,
+        health,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.patch("/api/integrations/apps/:id/setup", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = Number(req.params.id);
+      if (!Number.isInteger(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid app ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to update integration setup",
+      });
+      if (!canManage) return;
+
+      const parsed = z.object({
+        publicAppId: z.string().min(3).max(80).regex(/^[a-zA-Z0-9_-]+$/).optional(),
+        redirectEnabled: z.boolean().optional(),
+        embeddedEnabled: z.boolean().optional(),
+        webRedirectUrl: z.string().url().nullable().optional(),
+        mobileDeepLinkUrl: z.string().max(512).nullable().optional(),
+        webhookUrl: z.string().url().nullable().optional(),
+        allowedOrigins: z.union([z.array(z.string()), z.string()]).optional(),
+      }).safeParse(req.body || {});
+
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid setup payload" });
+      }
+
+      const integration = await storage.createOrUpdateIntegrationApp({
+        appSpaceId,
+        publicAppId: parsed.data.publicAppId,
+        redirectEnabled: parsed.data.redirectEnabled,
+        embeddedEnabled: parsed.data.embeddedEnabled,
+        webRedirectUrl: parsed.data.webRedirectUrl,
+        mobileDeepLinkUrl: parsed.data.mobileDeepLinkUrl,
+        webhookUrl: parsed.data.webhookUrl,
+        allowedOrigins: parseAllowedOrigins(parsed.data.allowedOrigins),
+      });
+      const health = await storage.getIntegrationHealth(integration.id);
+      const baseUrl = getBaseUrl(req);
+
+      return res.json({
+        setup: {
+          id: integration.id,
+          appSpaceId: integration.appSpaceId,
+          publicAppId: integration.publicAppId,
+          redirectEnabled: integration.redirectEnabled,
+          embeddedEnabled: integration.embeddedEnabled,
+          webRedirectUrl: integration.webRedirectUrl,
+          mobileDeepLinkUrl: integration.mobileDeepLinkUrl,
+          webhookUrl: integration.webhookUrl,
+          allowedOrigins: parseAllowedOrigins(integration.allowedOrigins),
+          createdAt: integration.createdAt,
+          updatedAt: integration.updatedAt,
+        },
+        hostedJoinUrl: `${baseUrl}/i/${integration.publicAppId}/join`,
+        health,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.get("/api/integrations/apps/:id/setup-pack", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = Number(req.params.id);
+      if (!Number.isInteger(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid app ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to view setup pack",
+      });
+      if (!canManage) return;
+
+      const stack = req.query.stack === "react-native" ? "react-native" : "web";
+      const integration = await storage.getIntegrationAppByAppSpaceId(appSpaceId)
+        || await storage.createOrUpdateIntegrationApp({ appSpaceId });
+      const activeKey = await storage.getActiveIntegrationApiKeyForApp(integration.id);
+      const baseUrl = getBaseUrl(req);
+
+      const setupPack = buildIntegrationSetupPack({
+        appName: appSpace.name,
+        appSpaceSlug: appSpace.slug,
+        publicAppId: integration.publicAppId,
+        stack,
+        baseUrl,
+        webRedirectUrl: integration.webRedirectUrl,
+        mobileDeepLinkUrl: integration.mobileDeepLinkUrl,
+        redirectEnabled: integration.redirectEnabled,
+        embeddedEnabled: integration.embeddedEnabled,
+        webhookUrl: integration.webhookUrl,
+        hasApiKey: !!activeKey,
+        keyId: activeKey?.keyId,
+      });
+
+      return res.json({
+        stack,
+        setupPack,
+        setup: {
+          id: integration.id,
+          publicAppId: integration.publicAppId,
+          redirectEnabled: integration.redirectEnabled,
+          embeddedEnabled: integration.embeddedEnabled,
+          webRedirectUrl: integration.webRedirectUrl,
+          mobileDeepLinkUrl: integration.mobileDeepLinkUrl,
+          webhookUrl: integration.webhookUrl,
+          allowedOrigins: parseAllowedOrigins(integration.allowedOrigins),
+        },
+        hostedJoinUrl: `${baseUrl}/i/${integration.publicAppId}/join`,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.post("/api/integrations/apps/:id/api-keys/rotate", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = Number(req.params.id);
+      if (!Number.isInteger(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid app ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to rotate API keys",
+      });
+      if (!canManage) return;
+
+      const integration = await storage.getIntegrationAppByAppSpaceId(appSpaceId)
+        || await storage.createOrUpdateIntegrationApp({ appSpaceId });
+      const keyId = `fuk_${crypto.randomBytes(8).toString("hex")}`;
+      const secret = `fus_${crypto.randomBytes(24).toString("hex")}`;
+      const secretHash = hashSecret(secret);
+      const lastFour = secret.slice(-4);
+
+      const key = await storage.rotateIntegrationApiKey(integration.id, keyId, secretHash, lastFour);
+      return res.status(201).json({
+        key: {
+          keyId: key.keyId,
+          apiKey: `${keyId}.${secret}`,
+          lastFour: key.lastFour,
+          createdAt: key.createdAt,
+        },
+        note: "Store this key now. The secret will not be shown again.",
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.get("/api/integrations/apps/:id/health", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = Number(req.params.id);
+      if (!Number.isInteger(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid app ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to view integration health",
+      });
+      if (!canManage) return;
+
+      const integration = await storage.getIntegrationAppByAppSpaceId(appSpaceId)
+        || await storage.createOrUpdateIntegrationApp({ appSpaceId });
+      const health = await storage.getIntegrationHealth(integration.id);
+      const warnings: string[] = [];
+      if (!health.hasApiKey) warnings.push("No active API key");
+      if (!health.redirectConfigured) warnings.push("Redirect mode enabled but redirect URL missing");
+      if (!health.embeddedConfigured) warnings.push("Embedded mode enabled but allowed origins missing");
+      if (!health.hasWebhookUrl) warnings.push("Webhook URL missing");
+
+      return res.json({
+        healthy: warnings.length === 0,
+        health,
+        warnings,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.get("/api/integrations/apps/:id/usage-summary", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = Number(req.params.id);
+      if (!Number.isInteger(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid app ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to view integration analytics",
+      });
+      if (!canManage) return;
+
+      const integration = await storage.getIntegrationAppByAppSpaceId(appSpaceId);
+      if (!integration) {
+        return res.json({
+          sessionsCount: 0,
+          totalMinutes: 0,
+          avgSessionMinutes: 0,
+          liveNowCount: 0,
+          pendingCandidateCount: 0,
+          approvedCandidateCount: 0,
+        });
+      }
+
+      const summary = await storage.getIntegrationUsageSummary(integration.id);
+      const liveUsers = await storage.getLiveUsersForFounder(appSpaceId, 45);
+      const pendingCandidates = await storage.getIntegrationEngagementCandidates(integration.id, "pending");
+      const approvedCandidates = await storage.getIntegrationEngagementCandidates(integration.id, "approved");
+
+      return res.json({
+        sessionsCount: summary.sessionsCount,
+        totalMinutes: summary.totalMinutes,
+        avgSessionMinutes: summary.avgSessionMinutes,
+        liveNowCount: liveUsers.length,
+        pendingCandidateCount: pendingCandidates.length,
+        approvedCandidateCount: approvedCandidates.length,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.get("/api/integrations/apps/:id/engagement-candidates", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = Number(req.params.id);
+      if (!Number.isInteger(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid app ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to view engagement candidates",
+      });
+      if (!canManage) return;
+
+      const status = req.query.status === "approved" ? "approved" : "pending";
+      const integration = await storage.getIntegrationAppByAppSpaceId(appSpaceId);
+      if (!integration) {
+        return res.json({ status, candidates: [] });
+      }
+
+      const candidates = await storage.getIntegrationEngagementCandidates(integration.id, status);
+      return res.json({ status, candidates });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  // ============ PUBLIC INTEGRATION ENTRY ROUTES ============
+
+  app.get("/i/:publicAppId/join", async (req, res) => {
+    try {
+      const publicAppId = String(req.params.publicAppId || "").trim();
+      if (!publicAppId) {
+        return res.status(400).json({ message: "Missing public app ID" });
+      }
+
+      const integration = await storage.getIntegrationAppByPublicAppId(publicAppId);
+      if (!integration) {
+        return res.status(404).json({ message: "Integration app not found" });
+      }
+
+      const appSpace = await storage.getAppSpace(integration.appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const baseUrl = getBaseUrl(req);
+      const target = buildUrl(`${baseUrl}/space/${appSpace.slug}`, {
+        returnTo: typeof req.query.returnTo === "string" ? req.query.returnTo : undefined,
+        fu_public_app_id: integration.publicAppId,
+      });
+      return res.redirect(target);
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.get("/i/access/:code", async (req, res) => {
+    try {
+      const code = String(req.params.code || "").trim();
+      if (!code) {
+        return res.status(400).json({ message: "Missing access code" });
+      }
+
+      const codeHash = hashSecret(code);
+      const accessCode = await storage.getIntegrationAccessCodeByHash(codeHash);
+      if (!accessCode || accessCode.status !== "issued") {
+        return res.status(404).json({ message: "Access code not found or already redeemed" });
+      }
+      if (accessCode.expiresAt.getTime() < Date.now()) {
+        return res.status(410).json({ message: "Access code expired" });
+      }
+
+      const integration = await storage.getIntegrationAppById(accessCode.integrationAppId);
+      if (!integration) {
+        return res.status(404).json({ message: "Integration app not found" });
+      }
+      const appSpace = await storage.getAppSpace(integration.appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      // Set FirstUser session so widget/community surfaces can load immediately.
+      req.session.userId = accessCode.firstuserUserId;
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+
+      const requestedTarget = typeof req.query.target === "string" ? req.query.target : undefined;
+      const baseUrl = getBaseUrl(req);
+
+      if (requestedTarget && requestedTarget.startsWith("/")) {
+        return res.redirect(`${baseUrl}${requestedTarget}`);
+      }
+
+      const platform = req.query.platform === "mobile" ? "mobile" : "web";
+      if (platform === "mobile" && integration.mobileDeepLinkUrl) {
+        return res.redirect(buildUrl(integration.mobileDeepLinkUrl, {
+          fu_access_code: code,
+          fu_public_app_id: integration.publicAppId,
+        }));
+      }
+
+      if (integration.webRedirectUrl) {
+        return res.redirect(buildUrl(integration.webRedirectUrl, {
+          fu_access_code: code,
+          fu_public_app_id: integration.publicAppId,
+        }));
+      }
+
+      return res.redirect(`${baseUrl}/space/${appSpace.slug}/community`);
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.get("/i/widget/:token", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      const payload = verifyWidgetToken(token);
+      if (!payload) {
+        return res.status(401).json({ message: "Invalid widget token" });
+      }
+
+      const integration = await storage.getIntegrationAppById(payload.integrationAppId);
+      if (!integration || integration.appSpaceId !== payload.appSpaceId) {
+        return res.status(404).json({ message: "Integration app not found" });
+      }
+
+      const appSpace = await storage.getAppSpace(payload.appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      req.session.userId = payload.firstuserUserId;
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+
+      const target = typeof req.query.target === "string" && req.query.target.startsWith("/")
+        ? req.query.target
+        : `/widget/live-chat?appSpaceId=${appSpace.id}`;
+
+      return res.redirect(`${getBaseUrl(req)}${target}`);
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  // ============ PARTNER SERVER-TO-SERVER API (KEY AUTH) ============
+
+  app.post("/api/integration/v1/waitlist/start", requireIntegrationApiKey, async (req, res) => {
+    try {
+      const auth = (req as Request & {
+        integrationAuth: { integrationAppId: number; appSpaceId: number; publicAppId: string };
+      }).integrationAuth;
+
+      const parsed = z.object({
+        externalUserId: z.string().min(1).max(200).optional(),
+        email: z.string().email().optional(),
+        phone: z.string().max(40).optional(),
+        returnTo: z.string().max(1024).optional(),
+      }).safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid waitlist start payload" });
+      }
+
+      const appSpace = await storage.getAppSpace(auth.appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const baseUrl = getBaseUrl(req);
+      const continuationUrl = buildUrl(`${baseUrl}/i/${auth.publicAppId}/join`, {
+        returnTo: parsed.data.returnTo,
+      });
+
+      return res.status(201).json({
+        continuationUrl,
+        hostedJoinUrl: `${baseUrl}/i/${auth.publicAppId}/join`,
+        communityUrl: `${baseUrl}/space/${appSpace.slug}`,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.post("/api/integration/v1/access/exchange", requireIntegrationApiKey, async (req, res) => {
+    try {
+      const auth = (req as Request & {
+        integrationAuth: { integrationAppId: number; appSpaceId: number; publicAppId: string };
+      }).integrationAuth;
+
+      const parsed = z.object({
+        code: z.string().min(10),
+        externalUserId: z.string().min(1).max(200),
+        clientPlatform: z.string().max(32).optional(),
+      }).safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid access exchange payload" });
+      }
+
+      const accessCode = await storage.getIntegrationAccessCodeByHash(hashSecret(parsed.data.code));
+      if (!accessCode || accessCode.integrationAppId !== auth.integrationAppId) {
+        return res.status(404).json({ message: "Access code not found" });
+      }
+      if (accessCode.status !== "issued") {
+        return res.status(409).json({ message: "Access code already redeemed" });
+      }
+      if (accessCode.expiresAt.getTime() < Date.now()) {
+        return res.status(410).json({ message: "Access code expired" });
+      }
+
+      const redeemed = await storage.redeemIntegrationAccessCode(accessCode.id);
+      if (!redeemed) {
+        return res.status(409).json({ message: "Access code already redeemed" });
+      }
+
+      const link = await storage.upsertIntegrationIdentityLink({
+        integrationAppId: auth.integrationAppId,
+        firstuserUserId: redeemed.firstuserUserId,
+        externalUserId: parsed.data.externalUserId,
+      });
+      const user = await storage.getUser(redeemed.firstuserUserId);
+      const member = await storage.getWaitlistMember(auth.appSpaceId, redeemed.firstuserUserId);
+      const appSpace = await storage.getAppSpace(auth.appSpaceId);
+
+      if (member?.status === "approved") {
+        await storage.upsertLivePresence({
+          appSpaceId: auth.appSpaceId,
+          userId: redeemed.firstuserUserId,
+          status: "live",
+          clientPlatform: parsed.data.clientPlatform ?? "web",
+          lastSeenAt: new Date(),
+        });
+      }
+
+      return res.json({
+        linkedIdentity: {
+          externalUserId: link.externalUserId,
+          firstuserUserId: link.firstuserUserId,
+          currentPlanTier: link.currentPlanTier,
+        },
+        user: {
+          id: user?.id ?? redeemed.firstuserUserId,
+          username: user?.username ?? null,
+          displayName: user?.displayName ?? null,
+          avatarUrl: user?.avatarUrl ?? null,
+        },
+        membership: {
+          status: member?.status ?? "pending",
+          appSpaceId: auth.appSpaceId,
+          appSpaceSlug: appSpace?.slug ?? null,
+        },
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.post("/api/integration/v1/usage/heartbeat", requireIntegrationApiKey, async (req, res) => {
+    try {
+      const auth = (req as Request & {
+        integrationAuth: { integrationAppId: number; appSpaceId: number; publicAppId: string };
+      }).integrationAuth;
+
+      const parsed = z.object({
+        externalUserId: z.string().min(1),
+        status: z.enum(["live", "idle", "offline"]).default("live"),
+        clientPlatform: z.string().max(32).optional(),
+      }).safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid heartbeat payload" });
+      }
+
+      const link = await storage.getIntegrationIdentityLinkByExternalUserId(auth.integrationAppId, parsed.data.externalUserId);
+      if (!link) {
+        return res.status(404).json({ message: "Unknown external user mapping. Exchange access code first." });
+      }
+
+      const member = await storage.getWaitlistMember(auth.appSpaceId, link.firstuserUserId);
+      const membershipStatus = member?.status === "approved" ? "approved" : "pending";
+
+      await storage.upsertIntegrationUsageHeartbeat({
+        integrationAppId: auth.integrationAppId,
+        firstuserUserId: link.firstuserUserId,
+        membershipStatus,
+        clientPlatform: parsed.data.clientPlatform ?? "web",
+        status: parsed.data.status,
+        at: new Date(),
+      });
+
+      if (membershipStatus === "approved") {
+        await storage.upsertLivePresence({
+          appSpaceId: auth.appSpaceId,
+          userId: link.firstuserUserId,
+          status: parsed.data.status,
+          clientPlatform: parsed.data.clientPlatform ?? "web",
+          lastSeenAt: new Date(),
+        });
+      }
+
+      return res.json({
+        success: true,
+        membershipStatus,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.post("/api/integration/v1/users/:externalUserId/plan", requireIntegrationApiKey, async (req, res) => {
+    try {
+      const auth = (req as Request & {
+        integrationAuth: { integrationAppId: number; appSpaceId: number; publicAppId: string };
+      }).integrationAuth;
+      const externalUserId = String(req.params.externalUserId || "").trim();
+      if (!externalUserId) {
+        return res.status(400).json({ message: "External user ID required" });
+      }
+
+      const parsed = z.object({
+        planTier: z.string().min(1).max(80),
+      }).safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid plan payload" });
+      }
+
+      const existingLink = await storage.getIntegrationIdentityLinkByExternalUserId(auth.integrationAppId, externalUserId);
+      if (!existingLink) {
+        return res.status(404).json({ message: "Unknown external user mapping" });
+      }
+
+      const updated = await storage.upsertIntegrationIdentityLink({
+        integrationAppId: auth.integrationAppId,
+        firstuserUserId: existingLink.firstuserUserId,
+        externalUserId,
+        currentPlanTier: parsed.data.planTier,
+      });
+
+      const integrationApp = await storage.getIntegrationAppById(auth.integrationAppId);
+      const member = await storage.getWaitlistMember(auth.appSpaceId, existingLink.firstuserUserId);
+      if (integrationApp && member?.status !== "approved") {
+        await sendIntegrationWebhook({
+          integrationAppId: integrationApp.id,
+          webhookUrl: integrationApp.webhookUrl,
+          eventType: "integration.plan.mismatch",
+          payload: {
+            externalUserId,
+            firstuserUserId: existingLink.firstuserUserId,
+            planTier: parsed.data.planTier,
+            membershipStatus: member?.status ?? "pending",
+            message: "Plan was updated for a user who is not currently approved.",
+          },
+        });
+      }
+
+      return res.json({
+        success: true,
+        externalUserId: updated.externalUserId,
+        currentPlanTier: updated.currentPlanTier,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.post("/api/integration/v1/chat/widget-token", requireIntegrationApiKey, async (req, res) => {
+    try {
+      const auth = (req as Request & {
+        integrationAuth: { integrationAppId: number; appSpaceId: number; publicAppId: string };
+      }).integrationAuth;
+
+      const parsed = z.object({
+        externalUserId: z.string().min(1),
+      }).safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid widget token payload" });
+      }
+
+      const link = await storage.getIntegrationIdentityLinkByExternalUserId(auth.integrationAppId, parsed.data.externalUserId);
+      if (!link) {
+        return res.status(404).json({ message: "Unknown external user mapping" });
+      }
+
+      const member = await storage.getWaitlistMember(auth.appSpaceId, link.firstuserUserId);
+      if (!member || member.status !== "approved") {
+        return res.status(403).json({ message: "Approved membership required for live chat widget" });
+      }
+
+      const exp = Date.now() + INTEGRATION_WIDGET_TOKEN_TTL_MS;
+      const token = createWidgetToken({
+        integrationAppId: auth.integrationAppId,
+        firstuserUserId: link.firstuserUserId,
+        appSpaceId: auth.appSpaceId,
+        exp,
+      });
+      const appSpace = await storage.getAppSpace(auth.appSpaceId);
+      const fallbackTarget = appSpace ? `/widget/live-chat?appSpaceId=${appSpace.id}` : "/widget/live-chat";
+      const widgetUrl = `${getBaseUrl(req)}/i/widget/${token}?target=${encodeURIComponent(fallbackTarget)}`;
+
+      return res.json({
+        token,
+        expiresAt: new Date(exp).toISOString(),
+        widgetUrl,
       });
     } catch (error) {
       throw error;
