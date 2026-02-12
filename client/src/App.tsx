@@ -26,6 +26,7 @@ import Settings from "@/pages/Settings";
 import FounderToolsPage from "@/pages/FounderToolsPage";
 import Messages from "@/pages/Messages";
 import WidgetLiveChatPage from "@/pages/WidgetLiveChatPage";
+import IntegrationJoinPage from "@/pages/IntegrationJoinPage";
 
 function Router() {
   return (
@@ -33,6 +34,7 @@ function Router() {
       <Route path="/" component={FirstUserLandingPage} />
       <Route path="/style-guide" component={StyleGuide} />
       <Route path="/explore" component={Explore} />
+      <Route path="/join/:publicAppId" component={IntegrationJoinPage} />
       <Route path="/create">
         <ProtectedRoute requirePhoneVerified>
           <CreateSpace />

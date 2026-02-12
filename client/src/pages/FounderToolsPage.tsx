@@ -318,6 +318,7 @@ interface IntegrationSetupPayload {
   webRedirectUrl: string | null;
   mobileDeepLinkUrl: string | null;
   webhookUrl: string | null;
+  webhookSecretLastFour: string | null;
   allowedOrigins: string[];
   createdAt: string;
   updatedAt: string;
@@ -330,6 +331,7 @@ interface IntegrationSetupResponse {
   health: {
     hasApiKey: boolean;
     hasWebhookUrl: boolean;
+    hasWebhookSecret: boolean;
     redirectConfigured: boolean;
     embeddedConfigured: boolean;
   };
@@ -356,6 +358,7 @@ function IntegrationsManager({ appSpaceId, appSpaceName }: { appSpaceId: number;
   const [allowedOriginsText, setAllowedOriginsText] = useState("");
   const [copyStatus, setCopyStatus] = useState<string>("");
   const [freshApiKey, setFreshApiKey] = useState<string | null>(null);
+  const [freshWebhookSecret, setFreshWebhookSecret] = useState<string | null>(null);
 
   const setupQuery = useQuery<IntegrationSetupResponse>({
     queryKey: ["integration-setup", appSpaceId],
@@ -476,6 +479,26 @@ function IntegrationsManager({ appSpaceId, appSpaceName }: { appSpaceId: number;
     },
     onSuccess: (payload) => {
       setFreshApiKey(payload.key.apiKey);
+      void queryClient.invalidateQueries({ queryKey: ["integration-setup", appSpaceId] });
+      void queryClient.invalidateQueries({ queryKey: ["integration-health", appSpaceId] });
+      void queryClient.invalidateQueries({ queryKey: ["integration-setup-pack", appSpaceId] });
+    },
+  });
+
+  const rotateWebhookSecretMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/integrations/apps/${appSpaceId}/webhook-secret/rotate`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.message || "Failed to rotate webhook secret");
+      }
+      return res.json() as Promise<{ webhookSecret: { value: string } }>;
+    },
+    onSuccess: (payload) => {
+      setFreshWebhookSecret(payload.webhookSecret.value);
       void queryClient.invalidateQueries({ queryKey: ["integration-setup", appSpaceId] });
       void queryClient.invalidateQueries({ queryKey: ["integration-health", appSpaceId] });
       void queryClient.invalidateQueries({ queryKey: ["integration-setup-pack", appSpaceId] });
@@ -606,24 +629,41 @@ function IntegrationsManager({ appSpaceId, appSpaceName }: { appSpaceId: number;
       </div>
 
       <div className="glass-panel p-6 space-y-3">
-        <h4 className="text-white font-semibold">Step 2: API Key</h4>
+        <h4 className="text-white font-semibold">Step 2: API Key + Webhook Secret</h4>
         <p className="text-sm text-white/65">
-          Generate one API key and store it in your partner backend. Do not put this key in frontend/mobile code.
+          Rotate both credentials now and save them in your backend secrets manager. Never put either value in frontend/mobile code.
         </p>
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-          <button
-            onClick={() => rotateKeyMutation.mutate()}
-            disabled={rotateKeyMutation.isPending}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-white/10 text-white hover:bg-white/15 disabled:opacity-60"
-          >
-            {rotateKeyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-            Rotate Key
-          </button>
-          {setupQuery.data?.activeApiKey && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-white/50">Partner API Key</p>
+            <button
+              onClick={() => rotateKeyMutation.mutate()}
+              disabled={rotateKeyMutation.isPending}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-white/10 text-white hover:bg-white/15 disabled:opacity-60"
+            >
+              {rotateKeyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+              Rotate Key
+            </button>
+            {setupQuery.data?.activeApiKey && (
+              <p className="text-xs text-white/60">
+                Active key: <span className="text-white">{setupQuery.data.activeApiKey.keyId}</span> • ending {setupQuery.data.activeApiKey.lastFour}
+              </p>
+            )}
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-white/50">Webhook Signing Secret</p>
+            <button
+              onClick={() => rotateWebhookSecretMutation.mutate()}
+              disabled={rotateWebhookSecretMutation.isPending}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-white/10 text-white hover:bg-white/15 disabled:opacity-60"
+            >
+              {rotateWebhookSecretMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+              Rotate Secret
+            </button>
             <p className="text-xs text-white/60">
-              Active key: <span className="text-white">{setupQuery.data.activeApiKey.keyId}</span> • ending {setupQuery.data.activeApiKey.lastFour}
+              Current secret ending: <span className="text-white">{setupQuery.data?.setup.webhookSecretLastFour || "not set"}</span>
             </p>
-          )}
+          </div>
         </div>
         {freshApiKey && (
           <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
@@ -632,6 +672,20 @@ function IntegrationsManager({ appSpaceId, appSpaceName }: { appSpaceId: number;
               <code className="text-[11px] text-emerald-100 break-all">{freshApiKey}</code>
               <button
                 onClick={() => void copyToClipboard(freshApiKey, "API key")}
+                className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-100 text-xs"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+        )}
+        {freshWebhookSecret && (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
+            <p className="text-xs text-emerald-200 mb-2">Copy webhook secret now. This is shown only once.</p>
+            <div className="flex items-center gap-2">
+              <code className="text-[11px] text-emerald-100 break-all">{freshWebhookSecret}</code>
+              <button
+                onClick={() => void copyToClipboard(freshWebhookSecret, "Webhook secret")}
                 className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-100 text-xs"
               >
                 Copy

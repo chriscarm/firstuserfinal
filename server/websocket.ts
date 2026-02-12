@@ -44,6 +44,28 @@ interface OnlineUser {
 
 const onlineUsers: Map<number, Map<string, OnlineUser>> = new Map(); // appSpaceId -> Map<userId, user>
 
+type LiveSocketStatus = "live" | "idle";
+const livePresenceSockets: Map<string, Map<string, LiveSocketStatus>> = new Map(); // key: `${appSpaceId}:${userId}`
+
+function getLivePresenceKey(appSpaceId: number, userId: string): string {
+  return `${appSpaceId}:${userId}`;
+}
+
+function parseLivePresenceKey(key: string): { appSpaceId: number; userId: string } | null {
+  const separator = key.indexOf(":");
+  if (separator <= 0) return null;
+  const appSpaceId = Number(key.slice(0, separator));
+  if (!Number.isInteger(appSpaceId)) return null;
+  const userId = key.slice(separator + 1);
+  if (!userId) return null;
+  return { appSpaceId, userId };
+}
+
+function collapseLiveStatus(statuses: Map<string, LiveSocketStatus>): "live" | "idle" | "offline" {
+  if (statuses.size === 0) return "offline";
+  return Array.from(statuses.values()).includes("live") ? "live" : "idle";
+}
+
 let ioInstance: Server | null = null;
 
 export function emitNotificationToUser(userId: string, notification: unknown) {
@@ -143,7 +165,7 @@ export function setupWebSocket(httpServer: HttpServer, sessionMiddleware: any): 
       avatarUrl: user.avatarUrl,
     };
 
-    const heartbeatAppSpaces = new Set<number>();
+    const heartbeatPresenceKeys = new Set<string>();
 
     // Join a channel room
     socket.on("join-channel", async (data: { channelId: number; appSpaceId: number }) => {
@@ -609,14 +631,31 @@ export function setupWebSocket(httpServer: HttpServer, sessionMiddleware: any): 
         const clientPlatform = typeof data?.clientPlatform === "string" && data.clientPlatform.trim()
           ? data.clientPlatform.trim().slice(0, 32)
           : "web";
+        const presenceKey = getLivePresenceKey(appSpaceId, userId);
+        const statusesBySocket = livePresenceSockets.get(presenceKey) || new Map<string, LiveSocketStatus>();
+
+        if (status === "offline") {
+          statusesBySocket.delete(socket.id);
+          heartbeatPresenceKeys.delete(presenceKey);
+        } else {
+          statusesBySocket.set(socket.id, status === "idle" ? "idle" : "live");
+          heartbeatPresenceKeys.add(presenceKey);
+        }
+
+        if (statusesBySocket.size === 0) {
+          livePresenceSockets.delete(presenceKey);
+        } else {
+          livePresenceSockets.set(presenceKey, statusesBySocket);
+        }
+
+        const consolidatedStatus = collapseLiveStatus(statusesBySocket);
         const presence = await storage.upsertLivePresence({
           appSpaceId,
           userId,
-          status,
+          status: consolidatedStatus,
           clientPlatform,
           lastSeenAt: new Date(),
         });
-        heartbeatAppSpaces.add(appSpaceId);
 
         const liveUsers = await storage.getLiveUsersForFounder(appSpaceId, 45);
         io.to(`integration-live:${appSpaceId}:founders`).emit("presence.live-updated", {
@@ -886,13 +925,27 @@ export function setupWebSocket(httpServer: HttpServer, sessionMiddleware: any): 
       });
 
       // Mark integration live presence offline for spaces this socket heartbeated on.
-      const heartbeatAppSpaceIds = Array.from(heartbeatAppSpaces.values());
-      await Promise.all(heartbeatAppSpaceIds.map(async (appSpaceId) => {
+      const livePresenceKeys = Array.from(heartbeatPresenceKeys.values());
+      await Promise.all(livePresenceKeys.map(async (presenceKey) => {
         try {
+          heartbeatPresenceKeys.delete(presenceKey);
+          const parsedKey = parseLivePresenceKey(presenceKey);
+          if (!parsedKey) return;
+          const appSpaceId = parsedKey.appSpaceId;
+          const statusesBySocket = livePresenceSockets.get(presenceKey) || new Map<string, LiveSocketStatus>();
+          statusesBySocket.delete(socket.id);
+
+          if (statusesBySocket.size === 0) {
+            livePresenceSockets.delete(presenceKey);
+          } else {
+            livePresenceSockets.set(presenceKey, statusesBySocket);
+          }
+
+          const consolidatedStatus = collapseLiveStatus(statusesBySocket);
           await storage.upsertLivePresence({
             appSpaceId,
             userId,
-            status: "offline",
+            status: consolidatedStatus,
             clientPlatform: "web",
             lastSeenAt: new Date(),
           });

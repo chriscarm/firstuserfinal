@@ -103,6 +103,17 @@ declare module "express-session" {
     userId?: string;
     pendingUserId?: string;
     pendingAuthMethod?: "phone" | "email";
+    integrationPrefill?: {
+      integrationAppId: number;
+      appSpaceId: number;
+      appSpaceSlug: string;
+      publicAppId: string;
+      externalUserId?: string | null;
+      email?: string | null;
+      phone?: string | null;
+      returnTo?: string | null;
+      expiresAt: string;
+    };
   }
 }
 
@@ -155,10 +166,67 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+const SENSITIVE_LOG_KEY_PATTERN = /api[-_]?key|secret|token|signature|authorization|password|cookie|access[-_]?code|webhook/i;
+const SENSITIVE_LOG_VALUE_PATTERN = /^(fus_|fuk_|fuws_)[A-Za-z0-9._-]+$/;
+const MAX_LOG_PAYLOAD_LENGTH = 2000;
+
+function redactLogPayload(value: unknown, keyHint?: string, depth = 0, seen = new WeakSet<object>()): unknown {
+  if (keyHint && SENSITIVE_LOG_KEY_PATTERN.test(keyHint)) {
+    return "[REDACTED]";
+  }
+
+  if (value === null || value === undefined) return value;
+  if (typeof value !== "object") {
+    if (typeof value === "string") {
+      if (SENSITIVE_LOG_VALUE_PATTERN.test(value.trim())) {
+        return "[REDACTED]";
+      }
+      const sanitizedUrlParams = value.replace(
+        /([?&][^=]*(?:token|secret|signature|code)[^=]*=)[^&]*/gi,
+        "$1[REDACTED]",
+      );
+      if (sanitizedUrlParams.length > 500) {
+        return `${sanitizedUrlParams.slice(0, 500)}…`;
+      }
+      return sanitizedUrlParams;
+    }
+    return value;
+  }
+
+  if (depth > 6) return "[TRUNCATED]";
+  if (seen.has(value)) return "[CIRCULAR]";
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((item) => redactLogPayload(item, undefined, depth + 1, seen));
+  }
+
+  const result: Record<string, unknown> = {};
+  let fieldCount = 0;
+  for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+    if (fieldCount >= 80) {
+      result.__truncated__ = true;
+      break;
+    }
+    result[key] = redactLogPayload(nestedValue, key, depth + 1, seen);
+    fieldCount += 1;
+  }
+
+  return result;
+}
+
+function serializePayloadForLog(value: unknown): string {
+  const sanitized = redactLogPayload(value);
+  const serialized = JSON.stringify(sanitized);
+  if (!serialized) return "";
+  if (serialized.length <= MAX_LOG_PAYLOAD_LENGTH) return serialized;
+  return `${serialized.slice(0, MAX_LOG_PAYLOAD_LENGTH)}…`;
+}
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+  let capturedJsonResponse: unknown;
 
   const originalResJson = res.json;
   res.json = function (bodyJson, ...args) {
@@ -171,8 +239,11 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       const correlationId = (req as Request & { correlationId?: string }).correlationId;
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms${correlationId ? ` [${correlationId}]` : ""}`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      if (capturedJsonResponse !== undefined) {
+        const payload = serializePayloadForLog(capturedJsonResponse);
+        if (payload) {
+          logLine += ` :: ${payload}`;
+        }
       }
 
       log(logLine);

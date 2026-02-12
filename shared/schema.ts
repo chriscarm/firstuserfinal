@@ -557,6 +557,8 @@ export const integrationApps = pgTable("integration_apps", {
   mobileDeepLinkUrl: text("mobile_deep_link_url"),
   allowedOrigins: text("allowed_origins").notNull().default("[]"), // JSON array string
   webhookUrl: text("webhook_url"),
+  webhookSecret: text("webhook_secret"),
+  webhookSecretLastFour: text("webhook_secret_last_four"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -675,6 +677,28 @@ export const insertIntegrationWebhookDeliverySchema = createInsertSchema(integra
 });
 export type InsertIntegrationWebhookDelivery = z.infer<typeof insertIntegrationWebhookDeliverySchema>;
 export type IntegrationWebhookDelivery = typeof integrationWebhookDeliveries.$inferSelect;
+
+// Secure short-lived handoff intents for embedded waitlist prefill
+export const integrationWaitlistIntents = pgTable("integration_waitlist_intents", {
+  id: serial("id").primaryKey(),
+  integrationAppId: integer("integration_app_id").notNull().references(() => integrationApps.id),
+  tokenHash: text("token_hash").notNull().unique(),
+  externalUserId: text("external_user_id"),
+  email: text("email"),
+  phone: text("phone"),
+  returnTo: text("return_to"),
+  expiresAt: timestamp("expires_at").notNull(),
+  consumedAt: timestamp("consumed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertIntegrationWaitlistIntentSchema = createInsertSchema(integrationWaitlistIntents).omit({
+  id: true,
+  consumedAt: true,
+  createdAt: true,
+});
+export type InsertIntegrationWaitlistIntent = z.infer<typeof insertIntegrationWaitlistIntentSchema>;
+export type IntegrationWaitlistIntent = typeof integrationWaitlistIntents.$inferSelect;
 
 // Message reactions
 export const messageReactions = pgTable("message_reactions", {

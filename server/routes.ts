@@ -260,7 +260,9 @@ async function createAndEmitNotification(input: {
 
 const INTEGRATION_ACCESS_CODE_TTL_MS = 10 * 60 * 1000;
 const INTEGRATION_WIDGET_TOKEN_TTL_MS = 15 * 60 * 1000;
-const INTEGRATION_WEBHOOK_SIGNING_SECRET = process.env.INTEGRATION_WEBHOOK_SIGNING_SECRET || process.env.SESSION_SECRET || "dev-integration-secret";
+const INTEGRATION_WAITLIST_INTENT_TTL_MS = 30 * 60 * 1000;
+const INTEGRATION_WEBHOOK_SIGNING_FALLBACK = process.env.INTEGRATION_WEBHOOK_SIGNING_SECRET || process.env.SESSION_SECRET || "dev-integration-secret";
+const INTEGRATION_WIDGET_SIGNING_SECRET = process.env.INTEGRATION_WIDGET_SIGNING_SECRET || process.env.SESSION_SECRET || "dev-widget-secret";
 
 function hashSecret(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -358,8 +360,8 @@ async function authenticateIntegrationRequest(req: Request): Promise<{
   };
 }
 
-function signWebhookPayload(payload: string): string {
-  return crypto.createHmac("sha256", INTEGRATION_WEBHOOK_SIGNING_SECRET).update(payload).digest("hex");
+function signWebhookPayload(payload: string, secret: string): string {
+  return crypto.createHmac("sha256", secret).update(payload).digest("hex");
 }
 
 function createWidgetToken(payload: {
@@ -369,7 +371,7 @@ function createWidgetToken(payload: {
   exp: number;
 }): string {
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const sig = crypto.createHmac("sha256", INTEGRATION_WEBHOOK_SIGNING_SECRET).update(body).digest("base64url");
+  const sig = crypto.createHmac("sha256", INTEGRATION_WIDGET_SIGNING_SECRET).update(body).digest("base64url");
   return `${body}.${sig}`;
 }
 
@@ -381,7 +383,7 @@ function verifyWidgetToken(token: string): {
 } | null {
   const [body, sig] = token.split(".");
   if (!body || !sig) return null;
-  const expected = crypto.createHmac("sha256", INTEGRATION_WEBHOOK_SIGNING_SECRET).update(body).digest("base64url");
+  const expected = crypto.createHmac("sha256", INTEGRATION_WIDGET_SIGNING_SECRET).update(body).digest("base64url");
   if (!safeTimingEqual(sig, expected)) return null;
 
   try {
@@ -426,20 +428,45 @@ async function issueIntegrationAccessCode(options: {
   return { code, expiresAt };
 }
 
+async function issueIntegrationWaitlistIntent(options: {
+  integrationAppId: number;
+  externalUserId?: string;
+  email?: string;
+  phone?: string;
+  returnTo?: string;
+}): Promise<{ token: string; expiresAt: Date }> {
+  const token = crypto.randomBytes(24).toString("hex");
+  const expiresAt = new Date(Date.now() + INTEGRATION_WAITLIST_INTENT_TTL_MS);
+  await storage.createIntegrationWaitlistIntent({
+    integrationAppId: options.integrationAppId,
+    tokenHash: hashSecret(token),
+    externalUserId: options.externalUserId ?? null,
+    email: options.email ?? null,
+    phone: options.phone ?? null,
+    returnTo: options.returnTo ?? null,
+    expiresAt,
+  });
+  return { token, expiresAt };
+}
+
 async function sendIntegrationWebhook(options: {
   integrationAppId: number;
   webhookUrl: string | null;
   eventType: string;
   payload: Record<string, unknown>;
 }) {
-  if (!options.webhookUrl) return;
+  const integrationApp = await storage.getIntegrationAppById(options.integrationAppId);
+  const webhookUrl = options.webhookUrl || integrationApp?.webhookUrl || null;
+  if (!integrationApp || !webhookUrl) return;
+
+  const webhookSecret = integrationApp.webhookSecret || INTEGRATION_WEBHOOK_SIGNING_FALLBACK;
 
   const body = JSON.stringify({
     type: options.eventType,
     timestamp: new Date().toISOString(),
     data: options.payload,
   });
-  const signature = signWebhookPayload(body);
+  const signature = signWebhookPayload(body, webhookSecret);
 
   const delivery = await storage.createIntegrationWebhookDelivery({
     integrationAppId: options.integrationAppId,
@@ -452,11 +479,12 @@ async function sendIntegrationWebhook(options: {
   });
 
   try {
-    const response = await fetch(options.webhookUrl, {
+    const response = await fetch(webhookUrl, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-firstuser-signature": signature,
+        "x-firstuser-signature-sha256": signature,
       },
       body,
     });
@@ -484,6 +512,64 @@ async function sendIntegrationWebhook(options: {
   }
 }
 
+async function retrySingleIntegrationWebhookDelivery(delivery: {
+  id: number;
+  integrationAppId: number;
+  payload: string;
+  eventType: string;
+  attempt: number;
+}) {
+  const integrationApp = await storage.getIntegrationAppById(delivery.integrationAppId);
+  if (!integrationApp?.webhookUrl) {
+    await storage.updateIntegrationWebhookDeliveryStatus(delivery.id, {
+      status: "failed",
+      attempt: delivery.attempt + 1,
+      nextRetryAt: new Date(Date.now() + 15 * 60_000),
+    });
+    return;
+  }
+
+  const webhookSecret = integrationApp.webhookSecret || INTEGRATION_WEBHOOK_SIGNING_FALLBACK;
+  const signature = signWebhookPayload(delivery.payload, webhookSecret);
+  const nextAttempt = delivery.attempt + 1;
+  const maxAttempts = 5;
+
+  try {
+    const response = await fetch(integrationApp.webhookUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-firstuser-signature": signature,
+        "x-firstuser-signature-sha256": signature,
+      },
+      body: delivery.payload,
+    });
+
+    if (response.ok) {
+      await storage.updateIntegrationWebhookDeliveryStatus(delivery.id, {
+        status: "delivered",
+        attempt: nextAttempt,
+        nextRetryAt: null,
+      });
+      return;
+    }
+
+    const retryDelayMs = Math.min(30 * 60_000, Math.pow(2, nextAttempt) * 60_000);
+    await storage.updateIntegrationWebhookDeliveryStatus(delivery.id, {
+      status: nextAttempt >= maxAttempts ? "failed" : "failed",
+      attempt: nextAttempt,
+      nextRetryAt: nextAttempt >= maxAttempts ? null : new Date(Date.now() + retryDelayMs),
+    });
+  } catch {
+    const retryDelayMs = Math.min(30 * 60_000, Math.pow(2, nextAttempt) * 60_000);
+    await storage.updateIntegrationWebhookDeliveryStatus(delivery.id, {
+      status: nextAttempt >= maxAttempts ? "failed" : "failed",
+      attempt: nextAttempt,
+      nextRetryAt: nextAttempt >= maxAttempts ? null : new Date(Date.now() + retryDelayMs),
+    });
+  }
+}
+
 function buildIntegrationSetupPack(options: {
   appName: string;
   appSpaceSlug: string;
@@ -495,6 +581,7 @@ function buildIntegrationSetupPack(options: {
   redirectEnabled: boolean;
   embeddedEnabled: boolean;
   webhookUrl: string | null;
+  webhookSecretLastFour?: string | null;
   hasApiKey: boolean;
   keyId?: string;
 }): {
@@ -527,6 +614,7 @@ FirstUser config:
 - Partner web redirect URL: ${options.webRedirectUrl || "(not set yet)"}
 - Partner mobile deep link URL: ${options.mobileDeepLinkUrl || "(not set yet)"}
 - Webhook URL: ${options.webhookUrl || "(not set yet)"}
+- Webhook secret ending: ${options.webhookSecretLastFour || "(rotate webhook secret in Founder Tools)"}
 - ${keyInstruction}
 
 Implement exactly:
@@ -538,6 +626,7 @@ Implement exactly:
 6) Send plan tier updates to ${integrationApiBase}/users/:externalUserId/plan whenever billing tier changes.
 7) Request hosted chat widget token from ${integrationApiBase}/chat/widget-token and mount iframe/webview to the returned widgetUrl.
 8) Do not expose API secrets in frontend/mobile code. Backend only.
+9) Verify webhook signatures using header x-firstuser-signature-sha256 and your FirstUser webhook secret.
 
 Output required:
 - Provide files changed.
@@ -597,6 +686,7 @@ async function handleIntegrationMembershipEvent(options: {
   };
 
   if (options.status === "rejected") {
+    await storage.expireIssuedIntegrationAccessCodes(integrationApp.id, options.userId);
     await sendIntegrationWebhook({
       integrationAppId: integrationApp.id,
       webhookUrl: integrationApp.webhookUrl,
@@ -672,6 +762,8 @@ async function handleIntegrationMembershipEvent(options: {
   };
 }
 
+let integrationWebhookRetryLoopStarted = false;
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -692,6 +784,21 @@ export async function registerRoutes(
       return res.status(status).json({ message: error?.message || "Integration auth failed" });
     }
   };
+
+  if (!integrationWebhookRetryLoopStarted) {
+    integrationWebhookRetryLoopStarted = true;
+    setInterval(async () => {
+      try {
+        const pending = await storage.getPendingIntegrationWebhookDeliveries({
+          now: new Date(),
+          limit: 50,
+        });
+        await Promise.all(pending.map((delivery) => retrySingleIntegrationWebhookDelivery(delivery)));
+      } catch (error) {
+        console.error("[IntegrationWebhookRetry] Error processing retries:", error);
+      }
+    }, 60_000).unref();
+  }
 
   app.get("/api/stats/public", async (req, res) => {
     try {
@@ -3043,6 +3150,7 @@ export async function registerRoutes(
           webRedirectUrl: integration.webRedirectUrl,
           mobileDeepLinkUrl: integration.mobileDeepLinkUrl,
           webhookUrl: integration.webhookUrl,
+          webhookSecretLastFour: integration.webhookSecretLastFour,
           allowedOrigins: parseAllowedOrigins(integration.allowedOrigins),
           createdAt: integration.createdAt,
           updatedAt: integration.updatedAt,
@@ -3117,6 +3225,7 @@ export async function registerRoutes(
           webRedirectUrl: integration.webRedirectUrl,
           mobileDeepLinkUrl: integration.mobileDeepLinkUrl,
           webhookUrl: integration.webhookUrl,
+          webhookSecretLastFour: integration.webhookSecretLastFour,
           allowedOrigins: parseAllowedOrigins(integration.allowedOrigins),
           createdAt: integration.createdAt,
           updatedAt: integration.updatedAt,
@@ -3166,6 +3275,7 @@ export async function registerRoutes(
         redirectEnabled: integration.redirectEnabled,
         embeddedEnabled: integration.embeddedEnabled,
         webhookUrl: integration.webhookUrl,
+        webhookSecretLastFour: integration.webhookSecretLastFour,
         hasApiKey: !!activeKey,
         keyId: activeKey?.keyId,
       });
@@ -3181,6 +3291,7 @@ export async function registerRoutes(
           webRedirectUrl: integration.webRedirectUrl,
           mobileDeepLinkUrl: integration.mobileDeepLinkUrl,
           webhookUrl: integration.webhookUrl,
+          webhookSecretLastFour: integration.webhookSecretLastFour,
           allowedOrigins: parseAllowedOrigins(integration.allowedOrigins),
         },
         hostedJoinUrl: `${baseUrl}/i/${integration.publicAppId}/join`,
@@ -3232,6 +3343,48 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/integrations/apps/:id/webhook-secret/rotate", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = Number(req.params.id);
+      if (!Number.isInteger(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid app ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to rotate webhook secret",
+      });
+      if (!canManage) return;
+
+      const integration = await storage.getIntegrationAppByAppSpaceId(appSpaceId)
+        || await storage.createOrUpdateIntegrationApp({ appSpaceId });
+
+      const webhookSecret = `fuws_${crypto.randomBytes(24).toString("hex")}`;
+      const updated = await storage.rotateIntegrationWebhookSecret(
+        integration.id,
+        webhookSecret,
+        webhookSecret.slice(-4),
+      );
+
+      return res.status(201).json({
+        webhookSecret: {
+          value: webhookSecret,
+          lastFour: updated.webhookSecretLastFour,
+        },
+        note: "Store this webhook secret now. It is shown only once.",
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
   app.get("/api/integrations/apps/:id/health", requireAuth, async (req, res) => {
     try {
       const appSpaceId = Number(req.params.id);
@@ -3257,6 +3410,7 @@ export async function registerRoutes(
       const health = await storage.getIntegrationHealth(integration.id);
       const warnings: string[] = [];
       if (!health.hasApiKey) warnings.push("No active API key");
+      if (!health.hasWebhookSecret) warnings.push("No webhook signing secret");
       if (!health.redirectConfigured) warnings.push("Redirect mode enabled but redirect URL missing");
       if (!health.embeddedConfigured) warnings.push("Embedded mode enabled but allowed origins missing");
       if (!health.hasWebhookUrl) warnings.push("Webhook URL missing");
@@ -3373,12 +3527,132 @@ export async function registerRoutes(
         return res.status(404).json({ message: "AppSpace not found" });
       }
 
-      const baseUrl = getBaseUrl(req);
-      const target = buildUrl(`${baseUrl}/space/${appSpace.slug}`, {
-        returnTo: typeof req.query.returnTo === "string" ? req.query.returnTo : undefined,
-        fu_public_app_id: integration.publicAppId,
+      const intentToken = typeof req.query.intent === "string" ? req.query.intent.trim() : "";
+      const directReturnTo = typeof req.query.returnTo === "string" ? req.query.returnTo.trim() : "";
+
+      if (intentToken) {
+        const intent = await storage.getIntegrationWaitlistIntentByHash(hashSecret(intentToken));
+        if (!intent || intent.integrationAppId !== integration.id) {
+          return res.status(404).json({ message: "Join intent not found" });
+        }
+        if (intent.expiresAt.getTime() < Date.now()) {
+          return res.status(410).json({ message: "Join intent expired" });
+        }
+        if (intent.consumedAt) {
+          return res.status(409).json({ message: "Join intent already used" });
+        }
+
+        req.session.integrationPrefill = {
+          integrationAppId: integration.id,
+          appSpaceId: appSpace.id,
+          appSpaceSlug: appSpace.slug,
+          publicAppId: integration.publicAppId,
+          externalUserId: intent.externalUserId,
+          email: intent.email,
+          phone: intent.phone,
+          returnTo: intent.returnTo,
+          expiresAt: intent.expiresAt.toISOString(),
+        };
+        await storage.consumeIntegrationWaitlistIntent(intent.id);
+      } else if (directReturnTo) {
+        req.session.integrationPrefill = {
+          integrationAppId: integration.id,
+          appSpaceId: appSpace.id,
+          appSpaceSlug: appSpace.slug,
+          publicAppId: integration.publicAppId,
+          externalUserId: null,
+          email: null,
+          phone: null,
+          returnTo: directReturnTo,
+          expiresAt: new Date(Date.now() + INTEGRATION_WAITLIST_INTENT_TTL_MS).toISOString(),
+        };
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
       });
-      return res.redirect(target);
+
+      return res.redirect(`${getBaseUrl(req)}/join/${integration.publicAppId}`);
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.get("/api/integration/public/:publicAppId/join-context", async (req, res) => {
+    try {
+      const publicAppId = String(req.params.publicAppId || "").trim();
+      if (!publicAppId) {
+        return res.status(400).json({ message: "Missing public app ID" });
+      }
+
+      const integration = await storage.getIntegrationAppByPublicAppId(publicAppId);
+      if (!integration) {
+        return res.status(404).json({ message: "Integration app not found" });
+      }
+      const appSpace = await storage.getAppSpace(integration.appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const prefill = req.session.integrationPrefill;
+      const sessionReturnTo = prefill?.publicAppId === publicAppId ? prefill.returnTo : null;
+      const continueUrl = buildUrl(`${getBaseUrl(req)}/space/${appSpace.slug}`, {
+        returnTo: sessionReturnTo || undefined,
+      });
+
+      return res.json({
+        app: {
+          publicAppId: integration.publicAppId,
+          appSpaceId: appSpace.id,
+          appSpaceSlug: appSpace.slug,
+          appSpaceName: appSpace.name,
+          appSpaceTagline: appSpace.tagline,
+        },
+        continueUrl,
+        modes: {
+          redirectEnabled: integration.redirectEnabled,
+          embeddedEnabled: integration.embeddedEnabled,
+        },
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.get("/api/integration/prefill", async (req, res) => {
+    try {
+      const prefill = req.session.integrationPrefill;
+      if (!prefill) {
+        return res.json({ prefill: null });
+      }
+      if (new Date(prefill.expiresAt).getTime() < Date.now()) {
+        req.session.integrationPrefill = undefined;
+        await new Promise<void>((resolve) => req.session.save(() => resolve()));
+        return res.json({ prefill: null });
+      }
+      return res.json({
+        prefill: {
+          appSpaceId: prefill.appSpaceId,
+          email: prefill.email ?? null,
+          phone: prefill.phone ?? null,
+          externalUserId: prefill.externalUserId ?? null,
+          appSpaceSlug: prefill.appSpaceSlug,
+          returnTo: prefill.returnTo ?? null,
+        },
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.delete("/api/integration/prefill", async (req, res) => {
+    try {
+      req.session.integrationPrefill = undefined;
+      await new Promise<void>((resolve) => req.session.save(() => resolve()));
+      return res.json({ success: true });
     } catch (error) {
       throw error;
     }
@@ -3407,6 +3681,12 @@ export async function registerRoutes(
       const appSpace = await storage.getAppSpace(integration.appSpaceId);
       if (!appSpace) {
         return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const membership = await storage.getWaitlistMember(appSpace.id, accessCode.firstuserUserId);
+      if (!membership || membership.status !== "approved") {
+        await storage.expireIssuedIntegrationAccessCodes(integration.id, accessCode.firstuserUserId);
+        return res.status(403).json({ message: "Access link is no longer valid for this membership state" });
       }
 
       // Set FirstUser session so widget/community surfaces can load immediately.
@@ -3506,14 +3786,22 @@ export async function registerRoutes(
       }
 
       const baseUrl = getBaseUrl(req);
-      const continuationUrl = buildUrl(`${baseUrl}/i/${auth.publicAppId}/join`, {
+      const intent = await issueIntegrationWaitlistIntent({
+        integrationAppId: auth.integrationAppId,
+        externalUserId: parsed.data.externalUserId,
+        email: parsed.data.email,
+        phone: parsed.data.phone,
         returnTo: parsed.data.returnTo,
+      });
+      const continuationUrl = buildUrl(`${baseUrl}/i/${auth.publicAppId}/join`, {
+        intent: intent.token,
       });
 
       return res.status(201).json({
         continuationUrl,
         hostedJoinUrl: `${baseUrl}/i/${auth.publicAppId}/join`,
         communityUrl: `${baseUrl}/space/${appSpace.slug}`,
+        expiresAt: intent.expiresAt.toISOString(),
       });
     } catch (error) {
       throw error;
@@ -3551,24 +3839,28 @@ export async function registerRoutes(
         return res.status(409).json({ message: "Access code already redeemed" });
       }
 
+      const user = await storage.getUser(redeemed.firstuserUserId);
+      const member = await storage.getWaitlistMember(auth.appSpaceId, redeemed.firstuserUserId);
+      const appSpace = await storage.getAppSpace(auth.appSpaceId);
+
+      if (!member || member.status !== "approved") {
+        await storage.expireIssuedIntegrationAccessCodes(auth.integrationAppId, redeemed.firstuserUserId);
+        return res.status(403).json({ message: "User is not currently approved for this app" });
+      }
+
       const link = await storage.upsertIntegrationIdentityLink({
         integrationAppId: auth.integrationAppId,
         firstuserUserId: redeemed.firstuserUserId,
         externalUserId: parsed.data.externalUserId,
       });
-      const user = await storage.getUser(redeemed.firstuserUserId);
-      const member = await storage.getWaitlistMember(auth.appSpaceId, redeemed.firstuserUserId);
-      const appSpace = await storage.getAppSpace(auth.appSpaceId);
 
-      if (member?.status === "approved") {
-        await storage.upsertLivePresence({
-          appSpaceId: auth.appSpaceId,
-          userId: redeemed.firstuserUserId,
-          status: "live",
-          clientPlatform: parsed.data.clientPlatform ?? "web",
-          lastSeenAt: new Date(),
-        });
-      }
+      await storage.upsertLivePresence({
+        appSpaceId: auth.appSpaceId,
+        userId: redeemed.firstuserUserId,
+        status: "live",
+        clientPlatform: parsed.data.clientPlatform ?? "web",
+        lastSeenAt: new Date(),
+      });
 
       return res.json({
         linkedIdentity: {

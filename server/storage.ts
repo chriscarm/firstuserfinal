@@ -30,6 +30,7 @@ import {
   integrationIdentityLinks,
   integrationUsageSessions,
   integrationWebhookDeliveries,
+  integrationWaitlistIntents,
   appSpaceDrafts,
   adminIdeas,
   authVerifications,
@@ -96,6 +97,8 @@ import {
   type InsertIntegrationUsageSession,
   type IntegrationWebhookDelivery,
   type InsertIntegrationWebhookDelivery,
+  type IntegrationWaitlistIntent,
+  type InsertIntegrationWaitlistIntent,
   type AppSpaceDraft,
   type InsertAppSpaceDraft,
   type AdminIdea,
@@ -198,12 +201,14 @@ export interface IStorage {
     allowedOrigins?: string[];
     webhookUrl?: string | null;
   }): Promise<IntegrationApp>;
+  rotateIntegrationWebhookSecret(integrationAppId: number, webhookSecret: string, lastFour: string): Promise<IntegrationApp>;
   rotateIntegrationApiKey(integrationAppId: number, keyId: string, secretHash: string, lastFour: string): Promise<IntegrationApiKey>;
   getActiveIntegrationApiKeyByKeyId(keyId: string): Promise<IntegrationApiKey | undefined>;
   getActiveIntegrationApiKeyForApp(integrationAppId: number): Promise<IntegrationApiKey | undefined>;
   createIntegrationAccessCode(input: InsertIntegrationAccessCode): Promise<IntegrationAccessCode>;
   getIntegrationAccessCodeByHash(codeHash: string): Promise<IntegrationAccessCode | undefined>;
   redeemIntegrationAccessCode(id: number): Promise<IntegrationAccessCode | undefined>;
+  expireIssuedIntegrationAccessCodes(integrationAppId: number, firstuserUserId: string): Promise<number>;
   upsertIntegrationIdentityLink(input: {
     integrationAppId: number;
     firstuserUserId: string;
@@ -242,9 +247,14 @@ export interface IStorage {
     attempt?: number;
     nextRetryAt?: Date | null;
   }): Promise<IntegrationWebhookDelivery | undefined>;
+  getPendingIntegrationWebhookDeliveries(options: { now: Date; limit: number }): Promise<IntegrationWebhookDelivery[]>;
+  createIntegrationWaitlistIntent(input: InsertIntegrationWaitlistIntent): Promise<IntegrationWaitlistIntent>;
+  getIntegrationWaitlistIntentByHash(tokenHash: string): Promise<IntegrationWaitlistIntent | undefined>;
+  consumeIntegrationWaitlistIntent(id: number): Promise<IntegrationWaitlistIntent | undefined>;
   getIntegrationHealth(integrationAppId: number): Promise<{
     hasApiKey: boolean;
     hasWebhookUrl: boolean;
+    hasWebhookSecret: boolean;
     redirectConfigured: boolean;
     embeddedConfigured: boolean;
   }>;
@@ -1118,6 +1128,7 @@ export class DbStorage implements IStorage {
       return result[0];
     }
 
+    const webhookSecret = `fuws_${crypto.randomBytes(24).toString("hex")}`;
     const created = await db.insert(integrationApps).values({
       appSpaceId: input.appSpaceId,
       publicAppId: input.publicAppId?.trim() || `app_${crypto.randomBytes(8).toString("hex")}`,
@@ -1127,11 +1138,29 @@ export class DbStorage implements IStorage {
       mobileDeepLinkUrl: input.mobileDeepLinkUrl ?? null,
       allowedOrigins: JSON.stringify(normalizedOrigins ?? []),
       webhookUrl: input.webhookUrl ?? null,
+      webhookSecret,
+      webhookSecretLastFour: webhookSecret.slice(-4),
       createdAt: new Date(),
       updatedAt: new Date(),
     }).returning();
 
     return created[0];
+  }
+
+  async rotateIntegrationWebhookSecret(
+    integrationAppId: number,
+    webhookSecret: string,
+    lastFour: string
+  ): Promise<IntegrationApp> {
+    const result = await db.update(integrationApps)
+      .set({
+        webhookSecret,
+        webhookSecretLastFour: lastFour,
+        updatedAt: new Date(),
+      })
+      .where(eq(integrationApps.id, integrationAppId))
+      .returning();
+    return result[0];
   }
 
   async rotateIntegrationApiKey(
@@ -1207,6 +1236,20 @@ export class DbStorage implements IStorage {
       ))
       .returning();
     return result[0];
+  }
+
+  async expireIssuedIntegrationAccessCodes(integrationAppId: number, firstuserUserId: string): Promise<number> {
+    const result = await db.update(integrationAccessCodes)
+      .set({
+        status: "expired",
+      })
+      .where(and(
+        eq(integrationAccessCodes.integrationAppId, integrationAppId),
+        eq(integrationAccessCodes.firstuserUserId, firstuserUserId),
+        eq(integrationAccessCodes.status, "issued"),
+      ))
+      .returning({ id: integrationAccessCodes.id });
+    return result.length;
   }
 
   async upsertIntegrationIdentityLink(input: {
@@ -1518,9 +1561,48 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  async getPendingIntegrationWebhookDeliveries(options: { now: Date; limit: number }): Promise<IntegrationWebhookDelivery[]> {
+    return db.select().from(integrationWebhookDeliveries)
+      .where(and(
+        eq(integrationWebhookDeliveries.status, "failed"),
+        lt(integrationWebhookDeliveries.nextRetryAt, options.now),
+      ))
+      .orderBy(asc(integrationWebhookDeliveries.createdAt))
+      .limit(options.limit);
+  }
+
+  async createIntegrationWaitlistIntent(input: InsertIntegrationWaitlistIntent): Promise<IntegrationWaitlistIntent> {
+    const created = await db.insert(integrationWaitlistIntents).values({
+      ...input,
+      createdAt: new Date(),
+    }).returning();
+    return created[0];
+  }
+
+  async getIntegrationWaitlistIntentByHash(tokenHash: string): Promise<IntegrationWaitlistIntent | undefined> {
+    const result = await db.select().from(integrationWaitlistIntents)
+      .where(eq(integrationWaitlistIntents.tokenHash, tokenHash))
+      .limit(1);
+    return result[0];
+  }
+
+  async consumeIntegrationWaitlistIntent(id: number): Promise<IntegrationWaitlistIntent | undefined> {
+    const result = await db.update(integrationWaitlistIntents)
+      .set({
+        consumedAt: new Date(),
+      })
+      .where(and(
+        eq(integrationWaitlistIntents.id, id),
+        isNull(integrationWaitlistIntents.consumedAt),
+      ))
+      .returning();
+    return result[0];
+  }
+
   async getIntegrationHealth(integrationAppId: number): Promise<{
     hasApiKey: boolean;
     hasWebhookUrl: boolean;
+    hasWebhookSecret: boolean;
     redirectConfigured: boolean;
     embeddedConfigured: boolean;
   }> {
@@ -1529,6 +1611,7 @@ export class DbStorage implements IStorage {
       return {
         hasApiKey: false,
         hasWebhookUrl: false,
+        hasWebhookSecret: false,
         redirectConfigured: false,
         embeddedConfigured: false,
       };
@@ -1547,6 +1630,7 @@ export class DbStorage implements IStorage {
     return {
       hasApiKey: !!key,
       hasWebhookUrl: !!app.webhookUrl,
+      hasWebhookSecret: !!app.webhookSecret,
       redirectConfigured: !app.redirectEnabled || !!app.webRedirectUrl,
       embeddedConfigured: !app.embeddedEnabled || origins.length > 0,
     };
@@ -2400,6 +2484,7 @@ export class DbStorage implements IStorage {
       await db.execute(sql`DELETE FROM integration_usage_sessions WHERE integration_app_id IN (SELECT id FROM integration_apps WHERE app_space_id = ${space.id})`);
       await db.execute(sql`DELETE FROM integration_identity_links WHERE integration_app_id IN (SELECT id FROM integration_apps WHERE app_space_id = ${space.id})`);
       await db.execute(sql`DELETE FROM integration_access_codes WHERE integration_app_id IN (SELECT id FROM integration_apps WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM integration_waitlist_intents WHERE integration_app_id IN (SELECT id FROM integration_apps WHERE app_space_id = ${space.id})`);
       await db.execute(sql`DELETE FROM integration_webhook_deliveries WHERE integration_app_id IN (SELECT id FROM integration_apps WHERE app_space_id = ${space.id})`);
       await db.execute(sql`DELETE FROM integration_api_keys WHERE integration_app_id IN (SELECT id FROM integration_apps WHERE app_space_id = ${space.id})`);
       await db.execute(sql`DELETE FROM integration_apps WHERE app_space_id = ${space.id}`);

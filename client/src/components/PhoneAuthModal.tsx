@@ -19,6 +19,15 @@ import { Loader2, Phone, CheckCircle, User, Upload, ArrowLeft, AtSign, Mail } fr
 type AuthMethod = "phone" | "email";
 type Step = "choice" | "phone" | "email" | "verify" | "profile" | "username";
 
+interface IntegrationPrefill {
+  appSpaceId: number;
+  appSpaceSlug: string;
+  email: string | null;
+  phone: string | null;
+  externalUserId: string | null;
+  returnTo: string | null;
+}
+
 interface PhoneAuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -54,6 +63,46 @@ function PhoneAuthContent({
   const [usernameChecking, setUsernameChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
+  const [integrationPrefill, setIntegrationPrefill] = useState<IntegrationPrefill | null>(null);
+
+  const targetAppSpaceSlug = appSpaceSlug ?? integrationPrefill?.appSpaceSlug ?? null;
+  const targetAppSpaceId = appSpaceId ?? integrationPrefill?.appSpaceId ?? null;
+
+  useEffect(() => {
+    if (forcePhoneOnly) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/integration/prefill", { credentials: "include" });
+        if (!res.ok) return;
+        const payload = await res.json() as { prefill?: IntegrationPrefill | null };
+        const prefill = payload.prefill;
+        if (cancelled || !prefill) return;
+
+        setIntegrationPrefill(prefill);
+        if (prefill.phone) {
+          setPhone((prev) => prev || prefill.phone || "");
+        }
+        if (prefill.email) {
+          setEmail((prev) => prev || prefill.email || "");
+        }
+        if (prefill.phone && !prefill.email) {
+          setAuthMethod("phone");
+          setStep((prev) => (prev === "choice" ? "phone" : prev));
+        } else if (prefill.email && !prefill.phone) {
+          setAuthMethod("email");
+          setStep((prev) => (prev === "choice" ? "email" : prev));
+        }
+      } catch {
+        // Ignore prefill load failures so standard auth flow keeps working.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [forcePhoneOnly]);
 
   // Cooldown timer for resend
   useEffect(() => {
@@ -312,9 +361,9 @@ function PhoneAuthContent({
   });
 
   const handleJoinAndRedirect = async (userData: any) => {
-    if (appSpaceId) {
+    if (targetAppSpaceId) {
       try {
-        await joinWaitlistMutation.mutateAsync(appSpaceId);
+        await joinWaitlistMutation.mutateAsync(targetAppSpaceId);
       } catch (err) {
         // Continue even if join fails (might already be a member)
         console.error("Join waitlist error:", err);
@@ -328,16 +377,32 @@ function PhoneAuthContent({
     queryClient.invalidateQueries({ queryKey: ["appspace"] });
     queryClient.invalidateQueries({ queryKey: ["channels"] });
 
+    try {
+      await fetch("/api/integration/prefill", {
+        method: "DELETE",
+        credentials: "include",
+      });
+      setIntegrationPrefill(null);
+    } catch {
+      // Best effort cleanup only.
+    }
+
     // Close modal and redirect
+    const fallbackTarget = targetAppSpaceSlug
+      ? `/space/${targetAppSpaceSlug}/community`
+      : "/explore";
+    const integrationReturnTo = integrationPrefill?.returnTo?.trim();
     const targetPath = pendingRedirectUrl
       ? pendingRedirectUrl
-      : appSpaceSlug
-        ? `/space/${appSpaceSlug}/community`
-        : "/explore";
+      : integrationReturnTo || fallbackTarget;
 
     clearPendingRedirectUrl();
     onClose();
-    setLocation(targetPath);
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(targetPath)) {
+      window.location.assign(targetPath);
+      return;
+    }
+    setLocation(targetPath.startsWith("/") ? targetPath : `/${targetPath}`);
   };
 
   const handleAuthMethodChoice = (method: AuthMethod) => {
