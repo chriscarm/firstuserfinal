@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BRANCH="$(git symbolic-ref --quiet --short HEAD || true)"
+
+if [ -z "$BRANCH" ]; then
+  echo "[post-commit] Detached HEAD; skipping auto-push."
+  exit 0
+fi
+
+echo "[post-commit] Auto-pushing branch '$BRANCH'..."
+
+if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+  git push
+else
+  git push -u origin "$BRANCH"
+fi
+
+echo "[post-commit] Push complete."

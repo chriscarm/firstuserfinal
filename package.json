@@ -11,7 +11,9 @@
     "check": "tsc",
     "verify": "npm run check && npm run build",
     "verify:quick": "npm run check",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "setup:hooks": "bash scripts/setup-git-hooks.sh",
+    "ship": "bash scripts/ship.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

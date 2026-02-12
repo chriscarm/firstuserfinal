@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "[pre-commit] Running compile gate (npm run verify)..."
+npm run verify
+echo "[pre-commit] Verify passed."
