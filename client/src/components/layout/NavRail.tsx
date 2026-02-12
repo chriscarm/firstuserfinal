@@ -92,15 +92,16 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
       className="hidden md:flex flex-col w-[60px] bg-black border-r border-white/[0.08] z-20"
       data-testid="nav-rail"
     >
-      {/* Top Section: Notifications */}
+      {/* Top Section: Messages */}
       <div className="border-b border-white/[0.08] py-2">
-        <div className="flex items-center justify-center">
-          <NotificationBell
-            triggerClassName={`${railSlotBase} ${railSlotState(false)}`}
-            iconClassName={`h-5 w-5 transition-colors ${railIconState(false)}`}
-            badgeClassName="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center"
-          />
-        </div>
+        <button
+          onClick={handleMailClick}
+          className={`${railSlotBase} ${railSlotState(isMessagesActive)}`}
+          data-testid="nav-rail-mail"
+          title="Messages"
+        >
+          <Mail className={`h-5 w-5 transition-colors ${railIconState(isMessagesActive)}`} />
+        </button>
       </div>
 
       {/* Communities Section */}
@@ -232,15 +233,14 @@ export function NavRail({ communities = [], draftCommunity, onCommunityClick, un
           </div>
         </Link>
 
-        {/* Messages */}
-        <button
-          onClick={handleMailClick}
-          className={`${railSlotBase} ${railSlotState(isMessagesActive)}`}
-          data-testid="nav-rail-mail"
-          title="Messages"
-        >
-          <Mail className={`h-5 w-5 transition-colors ${railIconState(isMessagesActive)}`} />
-        </button>
+        {/* Notifications */}
+        <div className="flex items-center justify-center">
+          <NotificationBell
+            triggerClassName={`${railSlotBase} ${railSlotState(false)}`}
+            iconClassName={`h-5 w-5 transition-colors ${railIconState(false)}`}
+            badgeClassName="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center"
+          />
+        </div>
 
         {/* Account (Settings + Profile) */}
         <button

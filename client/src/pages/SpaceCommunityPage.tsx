@@ -299,6 +299,7 @@ function SpaceCommunityContent() {
   const { user, openPhoneAuthModal } = useAuth();
   const queryClient = useQueryClient();
   const [selectedChannel, setSelectedChannel] = useState<RealChannel | null>(null);
+  const [isMembersPanelCollapsed, setIsMembersPanelCollapsed] = useState(false);
   const [showSurveyModal, setShowSurveyModal] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
 
@@ -749,6 +750,8 @@ function SpaceCommunityContent() {
           <MemberListPanel
             appSpaceId={appSpace.id}
             founderId={appSpace.founderId}
+            collapsed={isMembersPanelCollapsed}
+            onToggleCollapsed={() => setIsMembersPanelCollapsed((prev) => !prev)}
           />
         )}
       </AppLayout>

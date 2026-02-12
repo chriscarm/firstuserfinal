@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { User, Crown, Shield, Users } from "lucide-react";
+import { User, Crown, Users, ChevronLeft, ChevronRight } from "lucide-react";
 import { useChat } from "@/components/chat";
 
 interface Member {
@@ -19,9 +19,17 @@ interface MemberListPanelProps {
   appSpaceId: number;
   founderId: string;
   onMemberClick?: (member: Member) => void;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
-export function MemberListPanel({ appSpaceId, founderId, onMemberClick }: MemberListPanelProps) {
+export function MemberListPanel({
+  appSpaceId,
+  founderId,
+  onMemberClick,
+  collapsed = false,
+  onToggleCollapsed,
+}: MemberListPanelProps) {
   const { isUserOnline, onlineUsers } = useChat();
   const [hoveredMember, setHoveredMember] = useState<string | null>(null);
 
@@ -108,10 +116,46 @@ export function MemberListPanel({ appSpaceId, founderId, onMemberClick }: Member
   };
 
   if (isLoading) {
+    if (collapsed) {
+      return (
+        <aside className="hidden lg:flex flex-col w-12 bg-white/[0.02] border-l border-white/[0.08]">
+          <button
+            onClick={onToggleCollapsed}
+            className="h-14 w-full flex items-center justify-center border-b border-white/[0.08] text-white/55 hover:text-white/85 hover:bg-white/[0.05] transition-colors"
+            title="Show members"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <div className="flex-1 flex items-center justify-center">
+            <Users className="h-4 w-4 text-white/35" />
+          </div>
+        </aside>
+      );
+    }
+
     return (
       <div className="w-60 bg-white/[0.02] border-l border-white/[0.08] flex items-center justify-center">
         <div className="w-5 h-5 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin" />
       </div>
+    );
+  }
+
+  if (collapsed) {
+    return (
+      <aside className="hidden lg:flex flex-col w-12 bg-white/[0.02] border-l border-white/[0.08]">
+        <button
+          onClick={onToggleCollapsed}
+          className="h-14 w-full flex items-center justify-center border-b border-white/[0.08] text-white/55 hover:text-white/85 hover:bg-white/[0.05] transition-colors"
+          title="Show members"
+          data-testid="members-panel-expand"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <div className="flex-1 flex flex-col items-center justify-start gap-2 pt-3">
+          <Users className="h-4 w-4 text-white/45" />
+          <span className="text-[10px] text-white/35 font-semibold">{members.length}</span>
+        </div>
+      </aside>
     );
   }
 
@@ -121,6 +165,14 @@ export function MemberListPanel({ appSpaceId, founderId, onMemberClick }: Member
         <Users className="h-4 w-4 text-white/50 mr-2" />
         <span className="text-sm font-medium text-white/70">Members</span>
         <span className="ml-auto text-xs text-white/30">{members.length}</span>
+        <button
+          onClick={onToggleCollapsed}
+          className="ml-2 h-8 w-8 rounded-lg flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.05] transition-colors"
+          title="Hide members"
+          data-testid="members-panel-collapse"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
       </div>
 
       <ScrollArea className="flex-1">
