@@ -19,7 +19,7 @@
 - DB migrations: `npm run db:push`
 
 ## Rules
-- Always work on a feature branch. Never commit directly to main.
+- Prefer feature branches for larger work. In CEO hands-off mode, Codex may commit/push the current branch automatically unless the user asks for a specific branch flow.
 - Run `npm run verify` before marking any task complete.
 - Do not modify `.replit`, `replit.nix`, or `replit.md` unless explicitly asked.
 - Do not commit `.env` files or secrets. Use `process.env.VAR_NAME` in code.
