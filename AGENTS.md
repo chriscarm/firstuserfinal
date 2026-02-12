@@ -26,6 +26,15 @@
 - Before starting any task, check if main has commits not authored by Codex.
   If it does, read those commits first to understand recent changes.
 
+## Autonomous Git Mode (CEO Hands-Off)
+- The user should not need to type git commands or commit messages.
+- At the end of every code-changing task, Codex must run the repo automation flow and push to GitHub automatically.
+- Use `npm run ship` with an auto-generated commit message when needed.
+- Do not ask the user to provide a commit message unless they explicitly request custom wording.
+- Keep the compile gate enabled: commits must pass `npm run verify` before they are accepted.
+- If verify fails, Codex fixes the issue and retries automatically before finishing the task.
+- Only skip commit/push when the user explicitly says not to push.
+
 ## Environment Variables (names only — see .env.example)
 - DATABASE_URL
 - SESSION_SECRET
