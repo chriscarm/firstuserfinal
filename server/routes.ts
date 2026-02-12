@@ -1383,6 +1383,39 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/users/me/live-visibility", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const preference = await storage.getUserLivePreference(userId);
+      return res.json({
+        showLiveToFounders: preference?.showLiveToFounders ?? true,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.patch("/api/users/me/live-visibility", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const parsed = z.object({
+        showLiveToFounders: z.boolean(),
+      }).safeParse(req.body || {});
+
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid live visibility payload" });
+      }
+
+      const preference = await storage.upsertUserLivePreference(userId, parsed.data.showLiveToFounders);
+      return res.json({
+        success: true,
+        showLiveToFounders: preference.showLiveToFounders,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
   app.delete("/api/users/me", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
@@ -2484,6 +2517,217 @@ export async function registerRoutes(
         activePolls: activePollsCount,
         totalBadges: badges.length,
         verifiedPhoneUsers: verifiedPhoneCount,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  // ============ LIVE PRESENCE + LIVE CHAT INTEGRATION API ============
+
+  app.get("/api/integrations/apps/:id/live-users", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      if (Number.isNaN(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid app ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to view live users",
+      });
+      if (!canManage) return;
+
+      const liveUsers = await storage.getLiveUsersForFounder(appSpaceId, 45);
+      return res.json({
+        liveUsers,
+        heartbeatIntervalSeconds: 15,
+        liveTimeoutSeconds: 45,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.get("/api/integrations/apps/:id/live-chats", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      if (Number.isNaN(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid app ID" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const userId = req.session.userId!;
+      const canManage = await hasFounderManagementAccess(userId, appSpace);
+      const member = await storage.getWaitlistMember(appSpaceId, userId);
+      const isApprovedMember = member?.status === "approved";
+
+      if (!canManage && !isApprovedMember) {
+        return res.status(403).json({ message: "Approved membership required" });
+      }
+
+      const threads = await storage.getLiveChatThreadsForUser(appSpaceId, userId);
+      return res.json({ threads });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.post("/api/integrations/apps/:id/live-chats", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      if (Number.isNaN(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid app ID" });
+      }
+
+      const parsed = z.object({
+        memberUserId: z.string().min(1),
+      }).safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid live chat payload" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const canManage = await ensureFounderManagementAccess({
+        req,
+        res,
+        appSpace,
+        message: "Not authorized to start live chats",
+      });
+      if (!canManage) return;
+
+      const member = await storage.getWaitlistMember(appSpaceId, parsed.data.memberUserId);
+      if (!member || member.status !== "approved") {
+        return res.status(400).json({ message: "Live chat requires an approved member" });
+      }
+
+      const presence = await storage.getLivePresenceByUser(appSpaceId, parsed.data.memberUserId);
+      const preference = await storage.getUserLivePreference(parsed.data.memberUserId);
+      const withinTimeout = presence?.lastSeenAt ? (Date.now() - presence.lastSeenAt.getTime()) <= 45_000 : false;
+      const visibleToFounders = preference?.showLiveToFounders ?? true;
+
+      if (!presence || presence.status !== "live" || !withinTimeout || !visibleToFounders) {
+        return res.status(400).json({ message: "Member is not currently live and visible" });
+      }
+
+      const founderUserId = req.session.userId!;
+      const thread = await storage.getOrCreateLiveChatThread(appSpaceId, founderUserId, parsed.data.memberUserId);
+      return res.status(201).json({ thread });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.get("/api/integrations/apps/:id/live-chats/:threadId/messages", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      const threadId = parseInt(req.params.threadId as string);
+      if (Number.isNaN(appSpaceId) || Number.isNaN(threadId)) {
+        return res.status(400).json({ message: "Invalid IDs" });
+      }
+
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const thread = await storage.getLiveChatThreadById(threadId);
+      if (!thread || thread.appSpaceId !== appSpaceId) {
+        return res.status(404).json({ message: "Live chat thread not found" });
+      }
+
+      const userId = req.session.userId!;
+      const isParticipant = await storage.isLiveChatParticipant(threadId, userId);
+      if (!isParticipant) {
+        return res.status(403).json({ message: "You are not a participant in this live chat" });
+      }
+
+      const before = req.query.before ? parseInt(req.query.before as string) : undefined;
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+      const messages = await storage.getLiveChatMessages(threadId, limit, before);
+      return res.json({ thread, messages });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.post("/api/integrations/apps/:id/live-chats/:threadId/messages", requireAuth, async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      const threadId = parseInt(req.params.threadId as string);
+      if (Number.isNaN(appSpaceId) || Number.isNaN(threadId)) {
+        return res.status(400).json({ message: "Invalid IDs" });
+      }
+
+      const parsed = z.object({
+        body: z.string().min(1).max(2000),
+      }).safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid message payload" });
+      }
+
+      const thread = await storage.getLiveChatThreadById(threadId);
+      if (!thread || thread.appSpaceId !== appSpaceId) {
+        return res.status(404).json({ message: "Live chat thread not found" });
+      }
+
+      const userId = req.session.userId!;
+      const isParticipant = await storage.isLiveChatParticipant(threadId, userId);
+      if (!isParticipant) {
+        return res.status(403).json({ message: "You are not a participant in this live chat" });
+      }
+
+      if (thread.memberUserId === userId) {
+        const member = await storage.getWaitlistMember(appSpaceId, userId);
+        if (!member || member.status !== "approved") {
+          return res.status(403).json({ message: "Approved membership required to reply" });
+        }
+      }
+
+      const message = await storage.createLiveChatMessage({
+        threadId,
+        senderUserId: userId,
+        body: parsed.data.body.trim(),
+      });
+
+      const sender = await storage.getUser(userId);
+      const recipientUserId = thread.memberUserId === userId ? thread.founderUserId : thread.memberUserId;
+
+      await createAndEmitNotification({
+        userId: recipientUserId,
+        type: "dm",
+        data: {
+          appSpaceId,
+          liveThreadId: threadId,
+          senderName: sender?.displayName || sender?.username || "Someone",
+        },
+      });
+
+      return res.status(201).json({
+        message: {
+          ...message,
+          sender: {
+            id: sender?.id ?? userId,
+            username: sender?.username ?? null,
+            displayName: sender?.displayName ?? null,
+            avatarUrl: sender?.avatarUrl ?? null,
+          },
+        },
       });
     } catch (error) {
       throw error;

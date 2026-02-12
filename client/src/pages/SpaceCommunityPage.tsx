@@ -9,6 +9,7 @@ import { useLayout } from "@/contexts/LayoutContext";
 import { AppLayout, ContextPanel, MainPane, SectionHeader, HeaderTitle } from "@/components/layout";
 import { MemberListPanel } from "@/components/MemberListPanel";
 import { SurveyResponseModal } from "@/components/SurveyResponseModal";
+import { LiveChatWidget } from "@/components/live/LiveChatWidget";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -461,6 +462,7 @@ function SpaceCommunityContent() {
 
   const isSpectator = level === "spectator";
   const userStatus = getStatusFromAccessLevel(level, isFounder);
+  const liveChatWidgetEnabled = !!user && !!appSpace && !isFounder && level === "approved";
 
   const handleJoinWaitlist = async () => {
     if (!user) {
@@ -780,6 +782,13 @@ function SpaceCommunityContent() {
             }
             setShowSearchModal(false);
           }}
+        />
+      )}
+
+      {appSpace && (
+        <LiveChatWidget
+          appSpaceId={appSpace.id}
+          enabled={liveChatWidgetEnabled}
         />
       )}
     </>

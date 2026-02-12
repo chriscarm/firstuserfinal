@@ -78,6 +78,16 @@ export default function Settings() {
     enabled: !!user,
   });
 
+  const { data: liveVisibilityData, refetch: refetchLiveVisibility } = useQuery({
+    queryKey: ["/api/users/me/live-visibility"],
+    queryFn: async () => {
+      const res = await fetch("/api/users/me/live-visibility", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch live visibility");
+      return res.json() as Promise<{ showLiveToFounders: boolean }>;
+    },
+    enabled: !!user,
+  });
+
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [title, setTitle] = useState("");
@@ -88,6 +98,7 @@ export default function Settings() {
   const [dmNotifications, setDmNotifications] = useState(true);
   const [badgeAlerts, setBadgeAlerts] = useState(true);
   const [showOnlineStatus, setShowOnlineStatus] = useState(true);
+  const [showLiveToFounders, setShowLiveToFounders] = useState(true);
   const [allowDmsFromAnyone, setAllowDmsFromAnyone] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [profileSaveState, setProfileSaveState] = useState<"idle" | "saving" | "success" | "error">("idle");
@@ -229,6 +240,11 @@ export default function Settings() {
     setAllowDmsFromAnyone(settingsData.allowDmsFromAnyone ?? false);
   }, [settingsData]);
 
+  useEffect(() => {
+    if (!liveVisibilityData) return;
+    setShowLiveToFounders(liveVisibilityData.showLiveToFounders ?? true);
+  }, [liveVisibilityData]);
+
   const normalizeUsername = (value: string) => value.trim().replace(/^@+/, "").toLowerCase();
 
   const updateProfile = useMutation({
@@ -281,11 +297,19 @@ export default function Settings() {
       if (!res.ok) throw new Error("Failed to save");
       return res.json();
     },
-    onSuccess: async () => {
-      await refetchSettings();
-      toast.success("Settings saved!");
+  });
+
+  const updateLiveVisibility = useMutation({
+    mutationFn: async (showLive: boolean) => {
+      const res = await fetch("/api/users/me/live-visibility", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ showLiveToFounders: showLive }),
+      });
+      if (!res.ok) throw new Error("Failed to save live visibility");
+      return res.json();
     },
-    onError: () => toast.error("Failed to save settings")
   });
 
   const handleSaveProfile = async () => {
@@ -342,16 +366,23 @@ export default function Settings() {
     }
   };
 
-  const handleSaveSettings = () => {
-    updateSettings.mutate({
-      emailNotifications,
-      smsNotifications,
-      pollReminders,
-      dmNotifications,
-      badgeAlerts,
-      showOnlineStatus,
-      allowDmsFromAnyone,
-    });
+  const handleSaveSettings = async () => {
+    try {
+      await updateSettings.mutateAsync({
+        emailNotifications,
+        smsNotifications,
+        pollReminders,
+        dmNotifications,
+        badgeAlerts,
+        showOnlineStatus,
+        allowDmsFromAnyone,
+      });
+      await updateLiveVisibility.mutateAsync(showLiveToFounders);
+      await Promise.all([refetchSettings(), refetchLiveVisibility()]);
+      toast.success("Settings saved!");
+    } catch (error) {
+      toast.error("Failed to save settings");
+    }
   };
 
   const deleteAccountMutation = useMutation({
@@ -676,11 +707,11 @@ export default function Settings() {
           <div className="mt-6">
             <Button
               onClick={handleSaveSettings}
-              disabled={updateSettings.isPending}
+              disabled={updateSettings.isPending || updateLiveVisibility.isPending}
               className="min-h-[44px] w-full bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white hover:from-violet-500 hover:to-fuchsia-500"
               data-testid="button-save-settings"
             >
-              {updateSettings.isPending ? (
+              {updateSettings.isPending || updateLiveVisibility.isPending ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Saving...
@@ -728,6 +759,15 @@ export default function Settings() {
                 checked={showOnlineStatus}
                 onCheckedChange={setShowOnlineStatus}
                 data-testid="switch-online-status"
+              />
+            </div>
+
+            <div className="flex min-h-[44px] items-center justify-between">
+              <span className="text-sm text-white/80">Show when live to founders</span>
+              <Switch
+                checked={showLiveToFounders}
+                onCheckedChange={setShowLiveToFounders}
+                data-testid="switch-live-visibility"
               />
             </div>
             

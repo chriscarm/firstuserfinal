@@ -1,13 +1,14 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Megaphone, BarChart3, Award, Loader2, Home, Users, Upload, Save, Plus, Trash2, CheckCircle2, X } from "lucide-react";
+import { ArrowLeft, Megaphone, BarChart3, Award, Loader2, Home, Users, Upload, Save, Plus, Trash2, CheckCircle2, X, Radio } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { AnnouncementsPanel } from "@/components/founder/AnnouncementsPanel";
 import { PollsPanel } from "@/components/founder/PollsPanel";
 import { BadgeAwardsPanel } from "@/components/founder/BadgeAwardsPanel";
+import { LiveNowPanel } from "@/components/founder/LiveNowPanel";
 
-type ToolsTab = "homepage" | "announcements" | "polls" | "badges" | "members" | "golden-ticket";
+type ToolsTab = "homepage" | "announcements" | "polls" | "badges" | "members" | "live-now" | "golden-ticket";
 
 interface Founder {
   name: string;
@@ -188,6 +189,7 @@ export default function FounderToolsPage() {
     { id: "polls", label: "Polls", icon: BarChart3 },
     { id: "badges", label: "Badges", icon: Award },
     { id: "members", label: "Members", icon: Users },
+    { id: "live-now", label: "Live Now", icon: Radio },
     { id: "golden-ticket", label: "Golden Ticket", icon: Award },
   ];
 
@@ -289,6 +291,9 @@ export default function FounderToolsPage() {
         )}
         {activeTab === "members" && (
           <MembersManager appSpaceId={activeAppSpace.id} />
+        )}
+        {activeTab === "live-now" && (
+          <LiveNowPanel appSpaceId={activeAppSpace.id} />
         )}
         {activeTab === "golden-ticket" && (
           <GoldenTicketManager appSpaceId={activeAppSpace.id} />

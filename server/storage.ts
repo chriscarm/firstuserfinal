@@ -19,6 +19,10 @@ import {
   userChannelRead,
   notifications,
   messageReactions,
+  userLivePreferences,
+  livePresence,
+  liveChatThreads,
+  liveChatMessages,
   appSpaceDrafts,
   adminIdeas,
   authVerifications,
@@ -65,6 +69,14 @@ import {
   type InsertNotification,
   type MessageReaction,
   type InsertMessageReaction,
+  type UserLivePreference,
+  type InsertUserLivePreference,
+  type LivePresence,
+  type InsertLivePresence,
+  type LiveChatThread,
+  type InsertLiveChatThread,
+  type LiveChatMessage,
+  type InsertLiveChatMessage,
   type AppSpaceDraft,
   type InsertAppSpaceDraft,
   type AdminIdea,
@@ -117,6 +129,42 @@ export interface IStorage {
   updateWaitlistMemberStatus(appSpaceId: number, userId: string, status: string): Promise<WaitlistMember>;
   setWaitlistMemberActive(appSpaceId: number, userId: string, isActive: boolean): Promise<WaitlistMember>;
   getWaitlistMembersWithUsers(appSpaceId: number): Promise<Array<WaitlistMember & { username: string | null; email: string | null; phoneVerified: boolean }>>;
+
+  getUserLivePreference(userId: string): Promise<UserLivePreference | undefined>;
+  upsertUserLivePreference(userId: string, showLiveToFounders: boolean): Promise<UserLivePreference>;
+  upsertLivePresence(input: {
+    appSpaceId: number;
+    userId: string;
+    status?: "live" | "idle" | "offline";
+    clientPlatform?: string;
+    lastSeenAt?: Date;
+  }): Promise<LivePresence>;
+  getLiveUsersForFounder(appSpaceId: number, liveWithinSeconds?: number): Promise<Array<{
+    userId: string;
+    username: string | null;
+    displayName: string | null;
+    avatarUrl: string | null;
+    title: string | null;
+    linkedInUrl: string | null;
+    lastSeenAt: Date;
+    status: string;
+    clientPlatform: string;
+    publicCommunities: Array<{ slug: string; name: string; status: string }>;
+  }>>;
+  getLivePresenceByUser(appSpaceId: number, userId: string): Promise<LivePresence | undefined>;
+  getOrCreateLiveChatThread(appSpaceId: number, founderUserId: string, memberUserId: string): Promise<LiveChatThread>;
+  getLiveChatThreadById(threadId: number): Promise<LiveChatThread | undefined>;
+  getLiveChatThreadsForUser(appSpaceId: number, userId: string): Promise<Array<LiveChatThread & {
+    founder: { id: string; username: string | null; displayName: string | null; avatarUrl: string | null };
+    member: { id: string; username: string | null; displayName: string | null; avatarUrl: string | null };
+    unreadCount: number;
+  }>>;
+  createLiveChatMessage(input: InsertLiveChatMessage): Promise<LiveChatMessage>;
+  getLiveChatMessages(threadId: number, limit?: number, beforeId?: number): Promise<Array<LiveChatMessage & {
+    sender: { id: string; username: string | null; displayName: string | null; avatarUrl: string | null };
+  }>>;
+  markLiveChatThreadRead(threadId: number, readerUserId: string): Promise<void>;
+  isLiveChatParticipant(threadId: number, userId: string): Promise<boolean>;
 }
 
 export class DbStorage implements IStorage {
@@ -655,6 +703,279 @@ export class DbStorage implements IStorage {
         .returning();
       return result[0];
     }
+  }
+
+  async getUserLivePreference(userId: string): Promise<UserLivePreference | undefined> {
+    const result = await db.select().from(userLivePreferences)
+      .where(eq(userLivePreferences.userId, userId))
+      .limit(1);
+    return result[0];
+  }
+
+  async upsertUserLivePreference(userId: string, showLiveToFounders: boolean): Promise<UserLivePreference> {
+    const existing = await this.getUserLivePreference(userId);
+    if (existing) {
+      const updated = await db.update(userLivePreferences)
+        .set({ showLiveToFounders, updatedAt: new Date() })
+        .where(eq(userLivePreferences.userId, userId))
+        .returning();
+      return updated[0];
+    }
+
+    const created = await db.insert(userLivePreferences).values({
+      userId,
+      showLiveToFounders,
+      updatedAt: new Date(),
+    }).returning();
+    return created[0];
+  }
+
+  async upsertLivePresence(input: {
+    appSpaceId: number;
+    userId: string;
+    status?: "live" | "idle" | "offline";
+    clientPlatform?: string;
+    lastSeenAt?: Date;
+  }): Promise<LivePresence> {
+    const now = new Date();
+    const lastSeenAt = input.lastSeenAt ?? now;
+    const status = input.status ?? "live";
+    const clientPlatform = input.clientPlatform ?? "web";
+
+    const result = await db.insert(livePresence).values({
+      appSpaceId: input.appSpaceId,
+      userId: input.userId,
+      status,
+      clientPlatform,
+      lastSeenAt,
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: [livePresence.appSpaceId, livePresence.userId],
+      set: {
+        status,
+        clientPlatform,
+        lastSeenAt,
+        updatedAt: now,
+      },
+    }).returning();
+
+    return result[0];
+  }
+
+  async getLivePresenceByUser(appSpaceId: number, userId: string): Promise<LivePresence | undefined> {
+    const result = await db.select().from(livePresence)
+      .where(and(
+        eq(livePresence.appSpaceId, appSpaceId),
+        eq(livePresence.userId, userId)
+      ))
+      .limit(1);
+    return result[0];
+  }
+
+  async getLiveUsersForFounder(appSpaceId: number, liveWithinSeconds: number = 45): Promise<Array<{
+    userId: string;
+    username: string | null;
+    displayName: string | null;
+    avatarUrl: string | null;
+    title: string | null;
+    linkedInUrl: string | null;
+    lastSeenAt: Date;
+    status: string;
+    clientPlatform: string;
+    publicCommunities: Array<{ slug: string; name: string; status: string }>;
+  }>> {
+    const cutoff = new Date(Date.now() - liveWithinSeconds * 1000);
+    const rows = await db.select({
+      userId: livePresence.userId,
+      username: users.username,
+      displayName: users.displayName,
+      avatarUrl: users.avatarUrl,
+      title: users.title,
+      linkedInUrl: users.linkedInUrl,
+      status: livePresence.status,
+      clientPlatform: livePresence.clientPlatform,
+      lastSeenAt: livePresence.lastSeenAt,
+      showLiveToFounders: userLivePreferences.showLiveToFounders,
+    })
+      .from(livePresence)
+      .innerJoin(users, eq(livePresence.userId, users.id))
+      .innerJoin(waitlistMembers, and(
+        eq(waitlistMembers.appSpaceId, livePresence.appSpaceId),
+        eq(waitlistMembers.userId, livePresence.userId)
+      ))
+      .leftJoin(userLivePreferences, eq(userLivePreferences.userId, livePresence.userId))
+      .where(and(
+        eq(livePresence.appSpaceId, appSpaceId),
+        eq(waitlistMembers.status, "approved"),
+        eq(livePresence.status, "live"),
+        gte(livePresence.lastSeenAt, cutoff),
+        or(
+          eq(userLivePreferences.showLiveToFounders, true),
+          sql`${userLivePreferences.id} IS NULL`
+        )
+      ))
+      .orderBy(desc(livePresence.lastSeenAt));
+
+    const result = await Promise.all(rows.map(async (row) => {
+      const memberships = await this.getUserWaitlistMemberships(row.userId);
+      const publicCommunities = memberships
+        .filter((membership) => membership.status === "pending" || membership.status === "approved")
+        .map((membership) => ({
+          slug: membership.appSpaceSlug,
+          name: membership.appSpaceName,
+          status: membership.status,
+        }));
+
+      return {
+        userId: row.userId,
+        username: row.username,
+        displayName: row.displayName,
+        avatarUrl: row.avatarUrl,
+        title: row.title,
+        linkedInUrl: row.linkedInUrl,
+        status: row.status,
+        clientPlatform: row.clientPlatform,
+        lastSeenAt: row.lastSeenAt,
+        publicCommunities,
+      };
+    }));
+
+    return result;
+  }
+
+  async getOrCreateLiveChatThread(appSpaceId: number, founderUserId: string, memberUserId: string): Promise<LiveChatThread> {
+    const existing = await db.select().from(liveChatThreads)
+      .where(and(
+        eq(liveChatThreads.appSpaceId, appSpaceId),
+        eq(liveChatThreads.founderUserId, founderUserId),
+        eq(liveChatThreads.memberUserId, memberUserId)
+      ))
+      .limit(1);
+    if (existing[0]) {
+      return existing[0];
+    }
+
+    const result = await db.insert(liveChatThreads).values({
+      appSpaceId,
+      founderUserId,
+      memberUserId,
+      openedAt: new Date(),
+      lastMessageAt: new Date(),
+      createdAt: new Date(),
+    }).returning();
+    return result[0];
+  }
+
+  async getLiveChatThreadById(threadId: number): Promise<LiveChatThread | undefined> {
+    const result = await db.select().from(liveChatThreads)
+      .where(eq(liveChatThreads.id, threadId))
+      .limit(1);
+    return result[0];
+  }
+
+  async isLiveChatParticipant(threadId: number, userId: string): Promise<boolean> {
+    const thread = await this.getLiveChatThreadById(threadId);
+    if (!thread) return false;
+    return thread.founderUserId === userId || thread.memberUserId === userId;
+  }
+
+  async getLiveChatThreadsForUser(appSpaceId: number, userId: string): Promise<Array<LiveChatThread & {
+    founder: { id: string; username: string | null; displayName: string | null; avatarUrl: string | null };
+    member: { id: string; username: string | null; displayName: string | null; avatarUrl: string | null };
+    unreadCount: number;
+  }>> {
+    const threads = await db.select().from(liveChatThreads)
+      .where(and(
+        eq(liveChatThreads.appSpaceId, appSpaceId),
+        or(
+          eq(liveChatThreads.founderUserId, userId),
+          eq(liveChatThreads.memberUserId, userId)
+        )
+      ))
+      .orderBy(desc(liveChatThreads.lastMessageAt));
+
+    const enriched = await Promise.all(threads.map(async (thread) => {
+      const founder = await this.getUser(thread.founderUserId);
+      const member = await this.getUser(thread.memberUserId);
+      const unreadResult = await db.select({ count: count() })
+        .from(liveChatMessages)
+        .where(and(
+          eq(liveChatMessages.threadId, thread.id),
+          sql`${liveChatMessages.senderUserId} <> ${userId}`,
+          sql`${liveChatMessages.readAt} IS NULL`
+        ));
+      return {
+        ...thread,
+        founder: {
+          id: founder?.id ?? thread.founderUserId,
+          username: founder?.username ?? null,
+          displayName: founder?.displayName ?? null,
+          avatarUrl: founder?.avatarUrl ?? null,
+        },
+        member: {
+          id: member?.id ?? thread.memberUserId,
+          username: member?.username ?? null,
+          displayName: member?.displayName ?? null,
+          avatarUrl: member?.avatarUrl ?? null,
+        },
+        unreadCount: unreadResult[0]?.count ?? 0,
+      };
+    }));
+
+    return enriched;
+  }
+
+  async createLiveChatMessage(input: InsertLiveChatMessage): Promise<LiveChatMessage> {
+    const now = new Date();
+    const result = await db.insert(liveChatMessages).values({
+      ...input,
+      createdAt: now,
+    }).returning();
+
+    await db.update(liveChatThreads)
+      .set({ lastMessageAt: now })
+      .where(eq(liveChatThreads.id, input.threadId));
+
+    return result[0];
+  }
+
+  async getLiveChatMessages(threadId: number, limit: number = 50, beforeId?: number): Promise<Array<LiveChatMessage & {
+    sender: { id: string; username: string | null; displayName: string | null; avatarUrl: string | null };
+  }>> {
+    const rows = await db.select({
+      id: liveChatMessages.id,
+      threadId: liveChatMessages.threadId,
+      senderUserId: liveChatMessages.senderUserId,
+      body: liveChatMessages.body,
+      createdAt: liveChatMessages.createdAt,
+      readAt: liveChatMessages.readAt,
+      sender: {
+        id: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        avatarUrl: users.avatarUrl,
+      },
+    })
+      .from(liveChatMessages)
+      .innerJoin(users, eq(liveChatMessages.senderUserId, users.id))
+      .where(beforeId
+        ? and(eq(liveChatMessages.threadId, threadId), lt(liveChatMessages.id, beforeId))
+        : eq(liveChatMessages.threadId, threadId)
+      )
+      .orderBy(desc(liveChatMessages.createdAt))
+      .limit(limit);
+
+    return rows.reverse();
+  }
+
+  async markLiveChatThreadRead(threadId: number, readerUserId: string): Promise<void> {
+    await db.update(liveChatMessages)
+      .set({ readAt: new Date() })
+      .where(and(
+        eq(liveChatMessages.threadId, threadId),
+        sql`${liveChatMessages.senderUserId} <> ${readerUserId}`,
+        sql`${liveChatMessages.readAt} IS NULL`
+      ));
   }
 
   // Channel methods
@@ -1498,6 +1819,10 @@ export class DbStorage implements IStorage {
 
     // Delete owned app spaces and dependent entities in safe order.
     for (const space of ownedAppSpaces) {
+      await db.execute(sql`DELETE FROM live_chat_messages WHERE thread_id IN (SELECT id FROM live_chat_threads WHERE app_space_id = ${space.id})`);
+      await db.execute(sql`DELETE FROM live_chat_threads WHERE app_space_id = ${space.id}`);
+      await db.execute(sql`DELETE FROM live_presence WHERE app_space_id = ${space.id}`);
+
       await db.execute(sql`DELETE FROM ticket_audit_events WHERE app_space_id = ${space.id}`);
       await db.execute(sql`DELETE FROM ticket_policy_events WHERE app_space_id = ${space.id}`);
       await db.execute(sql`DELETE FROM ticket_tiers WHERE golden_ticket_id IN (SELECT id FROM golden_tickets WHERE app_space_id = ${space.id})`);
@@ -1532,6 +1857,10 @@ export class DbStorage implements IStorage {
     await db.delete(authVerifications).where(eq(authVerifications.userId, userId));
 
     await db.delete(notifications).where(eq(notifications.userId, userId));
+    await db.delete(livePresence).where(eq(livePresence.userId, userId));
+    await db.delete(liveChatMessages).where(eq(liveChatMessages.senderUserId, userId));
+    await db.execute(sql`DELETE FROM live_chat_messages WHERE thread_id IN (SELECT id FROM live_chat_threads WHERE founder_user_id = ${userId} OR member_user_id = ${userId})`);
+    await db.execute(sql`DELETE FROM live_chat_threads WHERE founder_user_id = ${userId} OR member_user_id = ${userId}`);
     await db.delete(userChannelRead).where(eq(userChannelRead.userId, userId));
     await db.delete(messageReactions).where(eq(messageReactions.userId, userId));
     await db.delete(directMessages).where(eq(directMessages.senderId, userId));
@@ -1543,6 +1872,7 @@ export class DbStorage implements IStorage {
 
     await db.delete(badgeAwards).where(or(eq(badgeAwards.userId, userId), eq(badgeAwards.awardedBy, userId)));
     await db.delete(userSettings).where(eq(userSettings.userId, userId));
+    await db.delete(userLivePreferences).where(eq(userLivePreferences.userId, userId));
     await db.delete(appSpaceDrafts).where(eq(appSpaceDrafts.userId, userId));
 
     await db.delete(users).where(eq(users.id, userId));

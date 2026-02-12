@@ -17,11 +17,21 @@ interface DMTypingUser {
   timestamp: number;
 }
 
+interface LiveChatTypingUser {
+  id: string;
+  username: string | null;
+  threadId: number;
+  timestamp: number;
+}
+
 // Track typing users per channel
 const typingUsers: Map<number, Map<string, TypingUser>> = new Map();
 
 // Track typing users per DM conversation
 const dmTypingUsers: Map<number, Map<string, DMTypingUser>> = new Map();
+
+// Track typing users per live chat thread
+const liveChatTypingUsers: Map<number, Map<string, LiveChatTypingUser>> = new Map();
 
 // Track online users per app space
 interface OnlineUser {
@@ -39,6 +49,16 @@ let ioInstance: Server | null = null;
 export function emitNotificationToUser(userId: string, notification: unknown) {
   if (!ioInstance) return;
   ioInstance.to(`user:${userId}`).emit("new-notification", notification);
+}
+
+export function emitLiveChatMessageToThread(threadId: number, message: unknown) {
+  if (!ioInstance) return;
+  ioInstance.to(`live_chat:${threadId}`).emit("live_chat.message", message);
+}
+
+export function emitLiveChatReadToThread(threadId: number, payload: unknown) {
+  if (!ioInstance) return;
+  ioInstance.to(`live_chat:${threadId}`).emit("live_chat.read", payload);
 }
 
 // Clean up stale typing indicators (older than 3 seconds)
@@ -64,6 +84,17 @@ setInterval(() => {
     });
     if (users.size === 0) {
       dmTypingUsers.delete(conversationId);
+    }
+  });
+  // Clean live chat typing
+  liveChatTypingUsers.forEach((users, threadId) => {
+    users.forEach((typingUser, typingUserId) => {
+      if (now - typingUser.timestamp > 3000) {
+        users.delete(typingUserId);
+      }
+    });
+    if (users.size === 0) {
+      liveChatTypingUsers.delete(threadId);
     }
   });
 }, 1000);
@@ -111,6 +142,8 @@ export function setupWebSocket(httpServer: HttpServer, sessionMiddleware: any): 
       displayName: user.displayName,
       avatarUrl: user.avatarUrl,
     };
+
+    const heartbeatAppSpaces = new Set<number>();
 
     // Join a channel room
     socket.on("join-channel", async (data: { channelId: number; appSpaceId: number }) => {
@@ -504,8 +537,310 @@ export function setupWebSocket(httpServer: HttpServer, sessionMiddleware: any): 
       }
     });
 
+    // ============ LIVE PRESENCE + LIVE CHAT SOCKET HANDLERS ============
+
+    socket.on("presence.subscribe", async (data: { appSpaceId: number }) => {
+      try {
+        const appSpaceId = Number(data?.appSpaceId);
+        if (!Number.isInteger(appSpaceId)) {
+          socket.emit("error", { message: "Invalid app ID" });
+          return;
+        }
+
+        const appSpace = await storage.getAppSpace(appSpaceId);
+        if (!appSpace) {
+          socket.emit("error", { message: "AppSpace not found" });
+          return;
+        }
+
+        const canManage = appSpace.founderId === userId || !!user.hasFounderAccess;
+        if (!canManage) {
+          socket.emit("error", { message: "Founder access required for live presence" });
+          return;
+        }
+
+        const roomName = `integration-live:${appSpaceId}:founders`;
+        socket.join(roomName);
+        const liveUsers = await storage.getLiveUsersForFounder(appSpaceId, 45);
+        socket.emit("presence.live-snapshot", {
+          appSpaceId,
+          liveUsers,
+          heartbeatIntervalSeconds: 15,
+          liveTimeoutSeconds: 45,
+        });
+      } catch (error) {
+        console.error("[WebSocket] presence.subscribe error:", error);
+        socket.emit("error", { message: "Failed to subscribe to live presence" });
+      }
+    });
+
+    socket.on("presence.unsubscribe", (data: { appSpaceId: number }) => {
+      const appSpaceId = Number(data?.appSpaceId);
+      if (!Number.isInteger(appSpaceId)) return;
+      socket.leave(`integration-live:${appSpaceId}:founders`);
+    });
+
+    socket.on("presence.heartbeat", async (data: {
+      appSpaceId: number;
+      clientPlatform?: string;
+      status?: "live" | "idle" | "offline";
+    }) => {
+      try {
+        const appSpaceId = Number(data?.appSpaceId);
+        if (!Number.isInteger(appSpaceId)) {
+          socket.emit("error", { message: "Invalid app ID" });
+          return;
+        }
+
+        const appSpace = await storage.getAppSpace(appSpaceId);
+        if (!appSpace) {
+          socket.emit("error", { message: "AppSpace not found" });
+          return;
+        }
+
+        const member = await storage.getWaitlistMember(appSpaceId, userId);
+        const isFounder = appSpace.founderId === userId || !!user.hasFounderAccess;
+        if (!isFounder && member?.status !== "approved") {
+          socket.emit("error", { message: "Approved membership required for live presence" });
+          return;
+        }
+
+        const status = data?.status && ["live", "idle", "offline"].includes(data.status) ? data.status : "live";
+        const clientPlatform = typeof data?.clientPlatform === "string" && data.clientPlatform.trim()
+          ? data.clientPlatform.trim().slice(0, 32)
+          : "web";
+        const presence = await storage.upsertLivePresence({
+          appSpaceId,
+          userId,
+          status,
+          clientPlatform,
+          lastSeenAt: new Date(),
+        });
+        heartbeatAppSpaces.add(appSpaceId);
+
+        const liveUsers = await storage.getLiveUsersForFounder(appSpaceId, 45);
+        io.to(`integration-live:${appSpaceId}:founders`).emit("presence.live-updated", {
+          appSpaceId,
+          liveUsers,
+          heartbeatIntervalSeconds: 15,
+          liveTimeoutSeconds: 45,
+        });
+
+        socket.emit("presence.heartbeat.ack", {
+          appSpaceId,
+          status: presence.status,
+          lastSeenAt: presence.lastSeenAt,
+        });
+      } catch (error) {
+        console.error("[WebSocket] presence.heartbeat error:", error);
+        socket.emit("error", { message: "Failed to process heartbeat" });
+      }
+    });
+
+    socket.on("live_chat.join", async (data: { threadId: number }) => {
+      try {
+        const threadId = Number(data?.threadId);
+        if (!Number.isInteger(threadId)) {
+          socket.emit("error", { message: "Invalid thread ID" });
+          return;
+        }
+
+        const thread = await storage.getLiveChatThreadById(threadId);
+        if (!thread) {
+          socket.emit("error", { message: "Live chat thread not found" });
+          return;
+        }
+
+        const isParticipant = await storage.isLiveChatParticipant(threadId, userId);
+        if (!isParticipant) {
+          socket.emit("error", { message: "You are not a participant in this live chat" });
+          return;
+        }
+
+        const roomName = `live_chat:${threadId}`;
+        socket.join(roomName);
+
+        const threadTyping = liveChatTypingUsers.get(threadId);
+        if (threadTyping && threadTyping.size > 0) {
+          socket.emit("live_chat.typing_snapshot", {
+            threadId,
+            users: Array.from(threadTyping.values()).filter((typingUser) => typingUser.id !== userId).map((typingUser) => ({
+              id: typingUser.id,
+              username: typingUser.username,
+            })),
+          });
+        }
+      } catch (error) {
+        console.error("[WebSocket] live_chat.join error:", error);
+        socket.emit("error", { message: "Failed to join live chat thread" });
+      }
+    });
+
+    socket.on("live_chat.leave", (data: { threadId: number }) => {
+      const threadId = Number(data?.threadId);
+      if (!Number.isInteger(threadId)) return;
+
+      socket.leave(`live_chat:${threadId}`);
+      const threadTyping = liveChatTypingUsers.get(threadId);
+      if (threadTyping) {
+        threadTyping.delete(userId);
+      }
+      socket.to(`live_chat:${threadId}`).emit("live_chat.typing", {
+        threadId,
+        user: {
+          id: user.id,
+          username: user.username,
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl,
+        },
+        isTyping: false,
+      });
+    });
+
+    socket.on("live_chat.message", async (data: { threadId: number; body: string }) => {
+      try {
+        const threadId = Number(data?.threadId);
+        if (!Number.isInteger(threadId)) {
+          socket.emit("error", { message: "Invalid thread ID" });
+          return;
+        }
+
+        const body = typeof data?.body === "string" ? data.body.trim() : "";
+        if (!body || body.length > 2000) {
+          socket.emit("error", { message: "Message must be between 1 and 2000 characters" });
+          return;
+        }
+
+        const thread = await storage.getLiveChatThreadById(threadId);
+        if (!thread) {
+          socket.emit("error", { message: "Live chat thread not found" });
+          return;
+        }
+
+        const isParticipant = await storage.isLiveChatParticipant(threadId, userId);
+        if (!isParticipant) {
+          socket.emit("error", { message: "You are not a participant in this live chat" });
+          return;
+        }
+
+        if (thread.memberUserId === userId) {
+          const member = await storage.getWaitlistMember(thread.appSpaceId, userId);
+          if (!member || member.status !== "approved") {
+            socket.emit("error", { message: "Approved membership required to send live chat messages" });
+            return;
+          }
+        }
+
+        const message = await storage.createLiveChatMessage({
+          threadId,
+          senderUserId: userId,
+          body,
+        });
+
+        const payload = {
+          ...message,
+          sender: {
+            id: user.id,
+            username: user.username,
+            displayName: user.displayName,
+            avatarUrl: user.avatarUrl,
+          },
+        };
+
+        emitLiveChatMessageToThread(threadId, payload);
+
+        const recipientUserId = thread.memberUserId === userId ? thread.founderUserId : thread.memberUserId;
+        const notification = await storage.createNotification({
+          userId: recipientUserId,
+          type: "dm",
+          data: JSON.stringify({
+            appSpaceId: thread.appSpaceId,
+            liveThreadId: threadId,
+            senderName: user.displayName || user.username || "Someone",
+          }),
+        });
+        emitNotificationToUser(recipientUserId, notification);
+
+        const threadTyping = liveChatTypingUsers.get(threadId);
+        if (threadTyping) {
+          threadTyping.delete(userId);
+          socket.to(`live_chat:${threadId}`).emit("live_chat.typing", {
+            threadId,
+            user: {
+              id: user.id,
+              username: user.username,
+              displayName: user.displayName,
+              avatarUrl: user.avatarUrl,
+            },
+            isTyping: false,
+          });
+        }
+      } catch (error) {
+        console.error("[WebSocket] live_chat.message error:", error);
+        socket.emit("error", { message: "Failed to send live chat message" });
+      }
+    });
+
+    socket.on("live_chat.typing", async (data: { threadId: number; isTyping: boolean }) => {
+      try {
+        const threadId = Number(data?.threadId);
+        if (!Number.isInteger(threadId)) return;
+
+        const isParticipant = await storage.isLiveChatParticipant(threadId, userId);
+        if (!isParticipant) return;
+
+        if (!liveChatTypingUsers.has(threadId)) {
+          liveChatTypingUsers.set(threadId, new Map());
+        }
+        const threadTyping = liveChatTypingUsers.get(threadId)!;
+
+        if (data?.isTyping) {
+          threadTyping.set(userId, {
+            id: userId,
+            username: user.username,
+            threadId,
+            timestamp: Date.now(),
+          });
+        } else {
+          threadTyping.delete(userId);
+        }
+
+        socket.to(`live_chat:${threadId}`).emit("live_chat.typing", {
+          threadId,
+          user: {
+            id: user.id,
+            username: user.username,
+            displayName: user.displayName,
+            avatarUrl: user.avatarUrl,
+          },
+          isTyping: !!data?.isTyping,
+        });
+      } catch (error) {
+        console.error("[WebSocket] live_chat.typing error:", error);
+      }
+    });
+
+    socket.on("live_chat.read", async (data: { threadId: number }) => {
+      try {
+        const threadId = Number(data?.threadId);
+        if (!Number.isInteger(threadId)) return;
+
+        const isParticipant = await storage.isLiveChatParticipant(threadId, userId);
+        if (!isParticipant) return;
+
+        await storage.markLiveChatThreadRead(threadId, userId);
+        emitLiveChatReadToThread(threadId, {
+          threadId,
+          userId,
+          readAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error("[WebSocket] live_chat.read error:", error);
+      }
+    });
+
     // Handle disconnect
-    socket.on("disconnect", () => {
+    socket.on("disconnect", async () => {
       console.log(`[WebSocket] User disconnected: ${user.username || user.id}`);
 
       // Remove from all channel typing indicators
@@ -524,6 +859,23 @@ export function setupWebSocket(httpServer: HttpServer, sessionMiddleware: any): 
         }
       });
 
+      // Remove from all live chat typing indicators
+      liveChatTypingUsers.forEach((users, threadId) => {
+        if (users.has(userId)) {
+          users.delete(userId);
+          socket.to(`live_chat:${threadId}`).emit("live_chat.typing", {
+            threadId,
+            user: {
+              id: user.id,
+              username: user.username,
+              displayName: user.displayName,
+              avatarUrl: user.avatarUrl,
+            },
+            isTyping: false,
+          });
+        }
+      });
+
       // Remove from online users and broadcast
       onlineUsers.forEach((users, appSpaceId) => {
         const onlineUser = users.get(userId);
@@ -532,6 +884,29 @@ export function setupWebSocket(httpServer: HttpServer, sessionMiddleware: any): 
           io.to(`appspace:${appSpaceId}`).emit("presence:user-offline", userId);
         }
       });
+
+      // Mark integration live presence offline for spaces this socket heartbeated on.
+      const heartbeatAppSpaceIds = Array.from(heartbeatAppSpaces.values());
+      await Promise.all(heartbeatAppSpaceIds.map(async (appSpaceId) => {
+        try {
+          await storage.upsertLivePresence({
+            appSpaceId,
+            userId,
+            status: "offline",
+            clientPlatform: "web",
+            lastSeenAt: new Date(),
+          });
+          const liveUsers = await storage.getLiveUsersForFounder(appSpaceId, 45);
+          io.to(`integration-live:${appSpaceId}:founders`).emit("presence.live-updated", {
+            appSpaceId,
+            liveUsers,
+            heartbeatIntervalSeconds: 15,
+            liveTimeoutSeconds: 45,
+          });
+        } catch (error) {
+          console.error("[WebSocket] Failed to mark live presence offline:", error);
+        }
+      }));
     });
   });
 

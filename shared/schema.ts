@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, timestamp, boolean, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -466,6 +466,85 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
 });
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type Notification = typeof notifications.$inferSelect;
+
+// Live visibility preferences for founder radar
+export const userLivePreferences = pgTable("user_live_preferences", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id).unique(),
+  showLiveToFounders: boolean("show_live_to_founders").notNull().default(true),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertUserLivePreferenceSchema = createInsertSchema(userLivePreferences).omit({
+  id: true,
+  updatedAt: true,
+});
+export type InsertUserLivePreference = z.infer<typeof insertUserLivePreferenceSchema>;
+export type UserLivePreference = typeof userLivePreferences.$inferSelect;
+
+// Live presence heartbeat state for integrations
+export const livePresence = pgTable("live_presence", {
+  id: serial("id").primaryKey(),
+  appSpaceId: integer("app_space_id").notNull().references(() => appSpaces.id),
+  userId: text("user_id").notNull().references(() => users.id),
+  status: text("status").notNull().default("offline"), // live | idle | offline
+  clientPlatform: text("client_platform").notNull().default("web"),
+  lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  appSpaceUserUnique: unique("live_presence_app_space_user_unique").on(table.appSpaceId, table.userId),
+}));
+
+export const insertLivePresenceSchema = createInsertSchema(livePresence).omit({
+  id: true,
+  updatedAt: true,
+});
+export type InsertLivePresence = z.infer<typeof insertLivePresenceSchema>;
+export type LivePresence = typeof livePresence.$inferSelect;
+
+// Founder-member live chat threads scoped to an app space
+export const liveChatThreads = pgTable("live_chat_threads", {
+  id: serial("id").primaryKey(),
+  appSpaceId: integer("app_space_id").notNull().references(() => appSpaces.id),
+  founderUserId: text("founder_user_id").notNull().references(() => users.id),
+  memberUserId: text("member_user_id").notNull().references(() => users.id),
+  openedAt: timestamp("opened_at").notNull().defaultNow(),
+  lastMessageAt: timestamp("last_message_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  appFounderMemberUnique: unique("live_chat_threads_app_founder_member_unique").on(
+    table.appSpaceId,
+    table.founderUserId,
+    table.memberUserId
+  ),
+}));
+
+export const insertLiveChatThreadSchema = createInsertSchema(liveChatThreads).omit({
+  id: true,
+  openedAt: true,
+  lastMessageAt: true,
+  createdAt: true,
+});
+export type InsertLiveChatThread = z.infer<typeof insertLiveChatThreadSchema>;
+export type LiveChatThread = typeof liveChatThreads.$inferSelect;
+
+// Messages exchanged in founder live chat threads
+export const liveChatMessages = pgTable("live_chat_messages", {
+  id: serial("id").primaryKey(),
+  threadId: integer("thread_id").notNull().references(() => liveChatThreads.id),
+  senderUserId: text("sender_user_id").notNull().references(() => users.id),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  readAt: timestamp("read_at"),
+});
+
+export const insertLiveChatMessageSchema = createInsertSchema(liveChatMessages).omit({
+  id: true,
+  createdAt: true,
+  readAt: true,
+});
+export type InsertLiveChatMessage = z.infer<typeof insertLiveChatMessageSchema>;
+export type LiveChatMessage = typeof liveChatMessages.$inferSelect;
 
 // Message reactions
 export const messageReactions = pgTable("message_reactions", {
