@@ -1,0 +1,25 @@
+{
+  "name": "firstuser-sdk-contract",
+  "version": "1.0.0",
+  "requiredMethods": [
+    "init",
+    "startPresence",
+    "mountHostedChatWidget",
+    "startEmbeddedWaitlist",
+    "setPlanTier"
+  ],
+  "requiredApiFlows": [
+    "/api/integration/v1/waitlist/start",
+    "/api/integration/v1/access/exchange",
+    "/api/integration/v1/usage/heartbeat",
+    "/api/integration/v1/users/:externalUserId/plan",
+    "/api/integration/v1/chat/widget-token"
+  ],
+  "requiredRealtimeEvents": [
+    "presence.heartbeat",
+    "live_chat.message",
+    "live_chat.typing",
+    "live_chat.read"
+  ],
+  "webhookVerificationHeader": "x-firstuser-signature-sha256"
+}
