@@ -35,3 +35,16 @@ This conformance test verifies every stack prompt includes:
 ## Founder Tools behavior
 
 Founder Tools -> Integrate -> Step 3 now lets founders select any supported stack and copy a platform-specific master prompt.
+
+## Production release commands
+
+Run these commands when preparing SDK package releases:
+
+```bash
+npm run build:sdk-js
+npm run test:sdk-release-readiness
+npm run release:sdk-js:dry
+```
+
+Full runbook:
+- `docs/SDK_PRODUCTION_RELEASE_GUIDE.md`

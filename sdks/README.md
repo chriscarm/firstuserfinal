@@ -43,3 +43,21 @@ Validation commands:
 - `npm run test:integration-stacks`
 - `npm run test:sdk-kits`
 - `npm run test:sdk-runtime`
+
+JS package build and release commands:
+- `npm run build:sdk-js`
+- `npm run release:sdk-js:dry`
+- `npm run release:sdk-js`
+
+Published JS package names:
+- `@firstuser/sdk-web`
+- `@firstuser/sdk-react-native`
+- `@firstuser/sdk-expo`
+- `@firstuser/sdk-capacitor`
+- `@firstuser/sdk-nextjs`
+- `@firstuser/sdk-vue`
+- `@firstuser/sdk-nuxt`
+- `@firstuser/sdk-angular`
+
+Production release runbook:
+- `docs/SDK_PRODUCTION_RELEASE_GUIDE.md`

@@ -1,6 +1,21 @@
 name: firstuser_sdk
-description: FirstUser Flutter SDK starter
-version: 0.1.0
+description: FirstUser production Flutter SDK for waitlist, access exchange, presence, and chat widget flows.
+version: 1.0.0
+homepage: https://github.com/chriscarm/firstuserfinal
+repository: https://github.com/chriscarm/firstuserfinal
+issue_tracker: https://github.com/chriscarm/firstuserfinal/issues
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: ">=3.0.0 <4.0.0"
+
+topics:
+  - waitlist
+  - auth
+  - analytics
+  - chat
+
+dependencies:
+  meta: ^1.11.0
+
+dev_dependencies:
+  lints: ^3.0.0

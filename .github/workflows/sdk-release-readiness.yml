@@ -1,0 +1,92 @@
+name: SDK Release Readiness
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - "sdks/**"
+      - "docs/SDK_PRODUCTION_RELEASE_GUIDE.md"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/sdk-release-readiness.yml"
+      - ".github/workflows/sdk-publish-js.yml"
+      - ".github/workflows/sdk-publish-android.yml"
+      - ".github/workflows/sdk-publish-flutter.yml"
+  pull_request:
+    paths:
+      - "scripts/**"
+      - "sdks/**"
+      - "docs/SDK_PRODUCTION_RELEASE_GUIDE.md"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/sdk-release-readiness.yml"
+      - ".github/workflows/sdk-publish-js.yml"
+      - ".github/workflows/sdk-publish-android.yml"
+      - ".github/workflows/sdk-publish-flutter.yml"
+
+jobs:
+  js-readiness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full verify gate
+        run: npm run verify
+
+  android-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Android SDK smoke build
+        run: gradle -p sdks/android-kotlin build
+
+  ios-swift-smoke:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Swift package
+        run: swift build
+        working-directory: sdks/ios-swift
+
+  flutter-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Flutter package dependencies
+        run: flutter pub get
+        working-directory: sdks/flutter
+
+      - name: Flutter static analysis
+        run: dart analyze
+        working-directory: sdks/flutter

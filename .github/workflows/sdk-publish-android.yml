@@ -1,0 +1,38 @@
+name: Publish Android SDK
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run Android publish as a local-only dry run"
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  publish-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Dry run publish (Maven local)
+        if: ${{ inputs.dry_run }}
+        run: gradle -p sdks/android-kotlin publishToMavenLocal
+
+      - name: Publish to remote Maven repository
+        if: ${{ !inputs.dry_run }}
+        run: gradle -p sdks/android-kotlin publish
+        env:
+          MAVEN_REPOSITORY_URL: ${{ secrets.MAVEN_REPOSITORY_URL }}
+          MAVEN_REPOSITORY_USERNAME: ${{ secrets.MAVEN_REPOSITORY_USERNAME }}
+          MAVEN_REPOSITORY_PASSWORD: ${{ secrets.MAVEN_REPOSITORY_PASSWORD }}
