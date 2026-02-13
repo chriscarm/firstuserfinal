@@ -1412,7 +1412,11 @@ export async function registerRoutes(
 
       if (!result.success) {
         console.error("Email send error:", result.error);
-        return res.status(500).json({ message: result.error || "Failed to send email" });
+        const providerRejected = result.providerStatus === 401 || result.providerStatus === 403;
+        return res.status(providerRejected ? 503 : 500).json({
+          message: result.error || "Failed to send email",
+          code: providerRejected ? "EMAIL_PROVIDER_REJECTED" : "EMAIL_SEND_FAILED",
+        });
       }
 
       console.log("[EMAIL OTP] Send success - ID:", result.id);

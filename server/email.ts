@@ -4,6 +4,7 @@ interface SendEmailResult {
   success: boolean;
   error?: string;
   id?: string;
+  providerStatus?: number;
 }
 
 function initSendGrid() {
@@ -37,8 +38,30 @@ export async function sendEmail(
     const messageId = result.headers["x-message-id"] || result.headers["X-Message-Id"];
     return { success: true, id: typeof messageId === "string" ? messageId : "sendgrid" };
   } catch (error: any) {
-    console.error("[EMAIL] SendGrid error:", error?.response?.body || error?.message || error);
-    return { success: false, error: error?.message || "Failed to send email" };
+    const providerStatus = Number(error?.code || error?.response?.statusCode) || undefined;
+    const providerErrors = Array.isArray(error?.response?.body?.errors)
+      ? error.response.body.errors.map((entry: any) => entry?.message).filter(Boolean).join(" ")
+      : "";
+    const rawMessage = providerErrors || error?.message || "Failed to send email";
+    const normalizedMessage = String(rawMessage).toLowerCase();
+
+    let safeMessage = rawMessage;
+    if (
+      providerStatus === 403 ||
+      normalizedMessage.includes("forbidden") ||
+      normalizedMessage.includes("permission") ||
+      normalizedMessage.includes("sender identity")
+    ) {
+      safeMessage = "Email login is temporarily unavailable. Please verify SENDGRID_API_KEY and EMAIL_FROM sender settings.";
+    }
+
+    console.error("[EMAIL] SendGrid error:", {
+      providerStatus,
+      rawMessage,
+      body: error?.response?.body || null,
+    });
+
+    return { success: false, error: safeMessage, providerStatus };
   }
 }
 

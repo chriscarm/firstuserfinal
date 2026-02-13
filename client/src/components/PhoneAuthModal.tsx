@@ -35,6 +35,21 @@ interface PhoneAuthModalProps {
   appSpaceId: number | null;
 }
 
+async function readApiError(response: Response, fallbackMessage: string): Promise<string> {
+  try {
+    const payload = await response.json() as { message?: string };
+    if (payload?.message) return payload.message;
+  } catch {
+    // If the response isn't JSON, fall back to status text/default message.
+  }
+
+  if (response.status === 403 && response.statusText) {
+    return response.statusText;
+  }
+
+  return response.statusText || fallbackMessage;
+}
+
 function PhoneAuthContent({
   appSpaceSlug,
   appSpaceId,
@@ -156,8 +171,7 @@ function PhoneAuthContent({
         body: JSON.stringify({ phone: phoneNumber }),
       });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || "Failed to send code");
+        throw new Error(await readApiError(res, "Failed to send code"));
       }
       return res.json();
     },
@@ -181,8 +195,7 @@ function PhoneAuthContent({
         body: JSON.stringify({ code }),
       });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || "Verification failed");
+        throw new Error(await readApiError(res, "Verification failed"));
       }
       return res.json();
     },
@@ -224,8 +237,7 @@ function PhoneAuthContent({
         body: JSON.stringify({ email: emailAddress }),
       });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || "Failed to send code");
+        throw new Error(await readApiError(res, "Failed to send code"));
       }
       return res.json();
     },
@@ -235,6 +247,16 @@ function PhoneAuthContent({
       setError(null);
     },
     onError: (err: Error) => {
+      const normalized = err.message.toLowerCase();
+      if (
+        normalized === "forbidden" ||
+        normalized.includes("temporarily unavailable") ||
+        normalized.includes("sendgrid") ||
+        normalized.includes("email provider")
+      ) {
+        setError("Email login is temporarily unavailable right now. Please use phone login while we finish provider setup.");
+        return;
+      }
       setError(err.message);
     },
   });
@@ -249,8 +271,7 @@ function PhoneAuthContent({
         body: JSON.stringify({ code }),
       });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || "Verification failed");
+        throw new Error(await readApiError(res, "Verification failed"));
       }
       return res.json();
     },
