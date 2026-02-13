@@ -2,7 +2,7 @@
 
 let cachedCredentials: {
   accountSid: string;
-  apiKey: string;
+  apiKeySid: string;
   apiKeySecret: string;
   phoneNumber: string;
 } | null = null;
@@ -43,22 +43,67 @@ async function getCredentials() {
   }
 
   const s = connectionSettings.settings;
-  console.log("[Twilio] Connector fields:", Object.keys(s));
-  console.log("[Twilio] account_sid prefix:", s.account_sid?.substring(0, 4));
-  console.log("[Twilio] api_key prefix:", s.api_key?.substring(0, 4));
 
-  if (!s.account_sid || !s.api_key || !s.api_key_secret) {
+  const rawAccountSid = s.account_sid || "";
+  const rawApiKey = s.api_key || "";
+  const rawApiKeySecret = s.api_key_secret || "";
+  const phoneNumber = s.phone_number || "";
+
+  let accountSid: string;
+  let apiKeySid: string;
+  let apiKeySecret: string;
+
+  if (rawAccountSid.startsWith("AC")) {
+    accountSid = rawAccountSid;
+    apiKeySid = rawApiKey;
+    apiKeySecret = rawApiKeySecret;
+  } else if (rawAccountSid.startsWith("SK")) {
+    apiKeySid = rawAccountSid;
+    apiKeySecret = rawApiKey;
+    const fetchedAccountSid = await fetchAccountSid(apiKeySid, apiKeySecret);
+    accountSid = fetchedAccountSid;
+  } else {
+    accountSid = rawAccountSid;
+    apiKeySid = rawApiKey;
+    apiKeySecret = rawApiKeySecret;
+
+    if (!accountSid.startsWith("AC")) {
+      const fetchedAccountSid = await fetchAccountSid(apiKeySid || accountSid, apiKeySecret);
+      accountSid = fetchedAccountSid;
+    }
+  }
+
+  if (!accountSid || !apiKeySid || !apiKeySecret) {
     throw new Error('Twilio credentials incomplete');
   }
 
-  cachedCredentials = {
-    accountSid: s.account_sid,
-    apiKey: s.api_key,
-    apiKeySecret: s.api_key_secret,
-    phoneNumber: s.phone_number
-  };
+  console.log("[Twilio] Using accountSid:", accountSid.substring(0, 6) + "...");
+  console.log("[Twilio] Using apiKeySid:", apiKeySid.substring(0, 6) + "...");
+  console.log("[Twilio] Phone number configured:", !!phoneNumber);
 
+  cachedCredentials = { accountSid, apiKeySid, apiKeySecret, phoneNumber };
   return cachedCredentials;
+}
+
+async function fetchAccountSid(apiKeySid: string, apiKeySecret: string): Promise<string> {
+  const authHeader = Buffer.from(`${apiKeySid}:${apiKeySecret}`).toString("base64");
+  const response = await fetch("https://api.twilio.com/2010-04-01/Accounts.json?PageSize=1", {
+    headers: {
+      Authorization: `Basic ${authHeader}`,
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Twilio account SID (status ${response.status})`);
+  }
+
+  const data = await response.json() as { accounts?: Array<{ sid?: string }> };
+  const sid = data.accounts?.[0]?.sid;
+  if (!sid || !sid.startsWith("AC")) {
+    throw new Error("Could not determine Twilio Account SID from API");
+  }
+  return sid;
 }
 
 export async function sendTwilioSMS(to: string, message: string): Promise<{ success: boolean; sid?: string; error?: string }> {
@@ -76,7 +121,7 @@ export async function sendTwilioSMS(to: string, message: string): Promise<{ succ
       Body: message,
     });
 
-    const authHeader = Buffer.from(`${creds.apiKey}:${creds.apiKeySecret}`).toString("base64");
+    const authHeader = Buffer.from(`${creds.apiKeySid}:${creds.apiKeySecret}`).toString("base64");
 
     const response = await fetch(endpoint, {
       method: "POST",
