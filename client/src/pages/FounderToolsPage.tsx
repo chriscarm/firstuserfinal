@@ -9,6 +9,7 @@ import { BadgeAwardsPanel } from "@/components/founder/BadgeAwardsPanel";
 import { LiveNowPanel } from "@/components/founder/LiveNowPanel";
 
 type ToolsTab = "homepage" | "announcements" | "polls" | "badges" | "members" | "live-now" | "integrate" | "golden-ticket";
+type WaitlistMode = "forum-waitlist" | "chat-waitlist";
 
 interface Founder {
   name: string;
@@ -861,10 +862,30 @@ function HomepageEditor({
   const [tierRewardsList, setTierRewardsList] = useState<TierReward[]>([]);
   const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [selectedWaitlistMode, setSelectedWaitlistMode] = useState<WaitlistMode>("forum-waitlist");
   const hasHydrated = useRef(false);
 
   const logoInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
+
+  const { data: waitlistModeData, isLoading: waitlistModeLoading } = useQuery<{ mode: WaitlistMode }>({
+    queryKey: ["waitlist-mode", appSpace?.id],
+    queryFn: async () => {
+      if (!appSpace?.id) throw new Error("Missing app space ID");
+      const res = await fetch(`/api/appspaces/${appSpace.id}/waitlist-mode`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to load waitlist mode");
+      return res.json();
+    },
+    enabled: !!appSpace?.id,
+  });
+
+  useEffect(() => {
+    if (waitlistModeData?.mode) {
+      setSelectedWaitlistMode(waitlistModeData.mode);
+    }
+  }, [waitlistModeData?.mode]);
 
   useEffect(() => {
     if (appSpace && !hasHydrated.current) {
@@ -929,6 +950,40 @@ function HomepageEditor({
     },
   });
 
+  const waitlistModeMutation = useMutation({
+    mutationFn: async (mode: WaitlistMode) => {
+      if (!appSpace?.id) throw new Error("No app space selected");
+
+      const res = await fetch(`/api/appspaces/${appSpace.id}/waitlist-mode`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ mode }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.message || `Failed to update waitlist mode (${res.status})`);
+      }
+      return res.json();
+    },
+    onSuccess: (payload: { mode?: WaitlistMode }) => {
+      if (payload?.mode) {
+        setSelectedWaitlistMode(payload.mode);
+      }
+      if (appSpace?.id) {
+        queryClient.invalidateQueries({ queryKey: ["waitlist-mode", appSpace.id] });
+        queryClient.invalidateQueries({ queryKey: ["channels", appSpace.id] });
+      }
+      setSuccessMessage("Waitlist experience updated.");
+      setErrorMessage("");
+      setTimeout(() => setSuccessMessage(""), 2500);
+    },
+    onError: (error: Error) => {
+      setErrorMessage(error.message || "Failed to update waitlist experience");
+      setSuccessMessage("");
+    },
+  });
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, type: "logo" | "cover") => {
     const file = e.target.files?.[0];
     if (file) {
@@ -945,6 +1000,12 @@ function HomepageEditor({
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const handleWaitlistModeSelect = (mode: WaitlistMode) => {
+    setSelectedWaitlistMode(mode);
+    setErrorMessage("");
+    waitlistModeMutation.mutate(mode);
   };
 
   const handleSave = () => {
@@ -1058,6 +1119,47 @@ function HomepageEditor({
             />
           </div>
         </div>
+      </div>
+
+      {/* Waitlist Experience */}
+      <div className="glass-panel p-6">
+        <h3 className="text-lg font-bold text-white mb-2">Waitlist Experience</h3>
+        <p className="text-sm text-white/60 mb-4">
+          Choose how pending users interact before approval. Default is <span className="font-semibold text-white/80">forum-waitlist</span>.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <button
+            onClick={() => handleWaitlistModeSelect("forum-waitlist")}
+            disabled={waitlistModeLoading || waitlistModeMutation.isPending}
+            className={`rounded-xl border p-4 text-left transition-colors ${
+              selectedWaitlistMode === "forum-waitlist"
+                ? "border-emerald-400/60 bg-emerald-500/10"
+                : "border-white/15 bg-white/[0.03] hover:bg-white/[0.06]"
+            } disabled:opacity-60`}
+          >
+            <p className="text-sm font-semibold text-white">forum-waitlist</p>
+            <p className="text-xs text-white/60 mt-1">
+              Post-style waitlist room for longer updates and threaded-feeling conversations.
+            </p>
+          </button>
+          <button
+            onClick={() => handleWaitlistModeSelect("chat-waitlist")}
+            disabled={waitlistModeLoading || waitlistModeMutation.isPending}
+            className={`rounded-xl border p-4 text-left transition-colors ${
+              selectedWaitlistMode === "chat-waitlist"
+                ? "border-amber-400/60 bg-amber-500/10"
+                : "border-white/15 bg-white/[0.03] hover:bg-white/[0.06]"
+            } disabled:opacity-60`}
+          >
+            <p className="text-sm font-semibold text-white">chat-waitlist</p>
+            <p className="text-xs text-white/60 mt-1">
+              Fast live-chat room for real-time waitlist conversations.
+            </p>
+          </button>
+        </div>
+        <p className="text-xs text-white/50 mt-3">
+          This renames your primary waitlist channel and keeps member channels unchanged.
+        </p>
       </div>
 
       {/* Logo Upload */}

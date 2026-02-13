@@ -51,6 +51,9 @@ interface RealChannel {
 function ChannelIcon({ name, className }: { name: string; className?: string }) {
   const lowerName = name.toLowerCase();
 
+  if (lowerName.includes("forum")) {
+    return <Users className={className} />;
+  }
   if (lowerName.includes("waitlist") || lowerName.includes("chat") || lowerName.includes("let-me-in")) {
     return <MessageCircle className={className} />;
   }
@@ -132,6 +135,7 @@ function ChatRoomView({
   const [newMessageText, setNewMessageText] = useState("");
   const [publicMessages, setPublicMessages] = useState<any[]>([]);
   const [isLoadingPublicMessages, setIsLoadingPublicMessages] = useState(false);
+  const isForumChannel = channel.type === "forum" || channel.name.toLowerCase().includes("forum");
 
   useEffect(() => {
     let cancelled = false;
@@ -202,6 +206,11 @@ function ChatRoomView({
     <div className="flex flex-col h-full">
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {isForumChannel && (
+          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100/80">
+            Forum mode: share post-style updates and everyone can comment in this room.
+          </div>
+        )}
         {isSpectator && isLoadingPublicMessages ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="h-6 w-6 animate-spin text-white/40" />
@@ -250,7 +259,7 @@ function ChatRoomView({
               value={newMessageText}
               onChange={(e) => setNewMessageText(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-              placeholder={`Message #${channel.name}...`}
+              placeholder={isForumChannel ? `Post in #${channel.name}...` : `Message #${channel.name}...`}
               className="flex-1 h-11 px-4 rounded-lg bg-white/5 border border-white/[0.08] text-white/90 placeholder:text-white/45 focus:outline-none focus:border-white/20 transition-colors"
             />
             <Button
@@ -409,13 +418,13 @@ function SpaceCommunityContent() {
   // Auto-select first channel
   useEffect(() => {
     if (channels.length > 0 && !selectedChannel) {
-      // Select first waitlist channel if user is pending, otherwise first available
+      const communityChannels = channels.filter(c => !c.isLocked && !c.isWaitlistersOnly);
       const waitlistChannels = channels.filter(c => c.isWaitlistersOnly);
 
       if (level === "pending" && waitlistChannels.length > 0) {
         setSelectedChannel(waitlistChannels[0]);
-      } else if (waitlistChannels.length > 0) {
-        setSelectedChannel(waitlistChannels[0]);
+      } else if (communityChannels.length > 0) {
+        setSelectedChannel(communityChannels[0]);
       } else if (channels.length > 0) {
         setSelectedChannel(channels[0]);
       }
@@ -505,6 +514,9 @@ function SpaceCommunityContent() {
   const communityChannels = channels.filter(c => !c.isLocked && !c.isWaitlistersOnly);
   const waitlistChannels = channels.filter(c => c.isWaitlistersOnly);
   const membersOnlyChannels = channels.filter(c => c.isLocked && !c.isWaitlistersOnly);
+  const waitlistModeLabel = waitlistChannels.some((channel) => channel.name === "chat-waitlist" || channel.type === "chat")
+    ? "Waitlist Chat"
+    : "Waitlist Forum";
 
   // Build ContextPanel content
   const contextPanelContent = (
@@ -549,9 +561,9 @@ function SpaceCommunityContent() {
                     >
                       {channel.name}
                     </span>
-                    {channelUnread > 0 && !isActive ? (
-                      <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
-                        {channelUnread > 99 ? "99+" : channelUnread}
+                    {channelUnread > 0 ? (
+                      <span className="text-xs font-semibold text-rose-300/90">
+                        ({channelUnread > 99 ? "99+" : channelUnread})
                       </span>
                     ) : isActive ? (
                       <div className="w-2 h-2 rounded-full bg-white/60" />
@@ -565,7 +577,7 @@ function SpaceCommunityContent() {
           {/* Waitlist Channels Section */}
           {waitlistChannels.length > 0 && (
             <>
-              <SectionHeader title="Waitlist" variant="waitlist" />
+              <SectionHeader title={waitlistModeLabel} variant="waitlist" />
               {waitlistChannels.map((channel) => {
                 const channelUnread = unreadCounts[channel.id] || 0;
                 const isActive = selectedChannel?.id === channel.id;
@@ -594,9 +606,9 @@ function SpaceCommunityContent() {
                     >
                       {channel.name}
                     </span>
-                    {channelUnread > 0 && !isActive ? (
-                      <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
-                        {channelUnread > 99 ? "99+" : channelUnread}
+                    {channelUnread > 0 ? (
+                      <span className="text-xs font-semibold text-rose-300/90">
+                        ({channelUnread > 99 ? "99+" : channelUnread})
                       </span>
                     ) : isActive ? (
                       <div className="w-2 h-2 rounded-full bg-amber-400" />
@@ -645,9 +657,9 @@ function SpaceCommunityContent() {
                     </span>
                     {!canAccessLocked ? (
                       <Lock className="h-3.5 w-3.5 text-yellow-500" />
-                    ) : channelUnread > 0 && !isActive ? (
-                      <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
-                        {channelUnread > 99 ? "99+" : channelUnread}
+                    ) : channelUnread > 0 ? (
+                      <span className="text-xs font-semibold text-rose-300/90">
+                        ({channelUnread > 99 ? "99+" : channelUnread})
                       </span>
                     ) : null}
                   </div>

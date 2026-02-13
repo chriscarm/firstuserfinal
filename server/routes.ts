@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { storage, type WaitlistMode } from "./storage";
 import { insertAppSpaceSchema, insertWaitlistMemberSchema } from "@shared/schema";
 import { z } from "zod";
 import bcrypt from "bcrypt";
@@ -111,6 +111,23 @@ function getBadgeTier(position: number): string {
   if (position <= 100) return "10^2";
   if (position <= 1000) return "10^3";
   return "10^4";
+}
+
+const WAITLIST_MODE_VALUES = ["forum-waitlist", "chat-waitlist"] as const;
+
+function resolveWaitlistModeFromChannels(channelsList: Array<{ name: string; type: string; isWaitlistersOnly: boolean }>): WaitlistMode {
+  const waitlistChannels = channelsList.filter((channel) => channel.isWaitlistersOnly);
+  if (waitlistChannels.length === 0) return "forum-waitlist";
+
+  const explicitModeChannel = waitlistChannels.find((channel) =>
+    WAITLIST_MODE_VALUES.includes(channel.name as WaitlistMode),
+  );
+  if (explicitModeChannel?.name === "chat-waitlist") return "chat-waitlist";
+  if (explicitModeChannel?.name === "forum-waitlist") return "forum-waitlist";
+
+  const firstWaitlistChannel = waitlistChannels[0];
+  if (firstWaitlistChannel.type === "forum") return "forum-waitlist";
+  return "chat-waitlist";
 }
 
 // Helper to get user ID from session (phone auth only)
@@ -4270,6 +4287,90 @@ export async function registerRoutes(
 
   // ============ CHAT API ROUTES ============
 
+  app.get("/api/appspaces/:id/waitlist-mode", requireAppSpaceFounder(), async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      if (Number.isNaN(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid appspace ID" });
+      }
+
+      let channelsList = await storage.getChannels(appSpaceId);
+      if (channelsList.length === 0) {
+        channelsList = await storage.createDefaultChannels(appSpaceId, { waitlistMode: "forum-waitlist" });
+      }
+
+      const mode = resolveWaitlistModeFromChannels(channelsList);
+      return res.json({ mode });
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.patch("/api/appspaces/:id/waitlist-mode", requireAppSpaceFounder(), async (req, res) => {
+    try {
+      const appSpaceId = parseInt(req.params.id as string);
+      if (Number.isNaN(appSpaceId)) {
+        return res.status(400).json({ message: "Invalid appspace ID" });
+      }
+
+      const parsed = z.object({
+        mode: z.enum(WAITLIST_MODE_VALUES),
+      }).safeParse(req.body || {});
+
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues[0]?.message || "Invalid waitlist mode payload" });
+      }
+
+      const targetMode: WaitlistMode = parsed.data.mode;
+      let channelsList = await storage.getChannels(appSpaceId);
+
+      if (channelsList.length === 0) {
+        channelsList = await storage.createDefaultChannels(appSpaceId, { waitlistMode: targetMode });
+        return res.json({ mode: targetMode, channels: channelsList });
+      }
+
+      const waitlistChannels = channelsList.filter((channel) => channel.isWaitlistersOnly);
+      const modeConfig = targetMode === "forum-waitlist"
+        ? { name: "forum-waitlist", type: "forum", description: "Forum posts for waitlist members" }
+        : { name: "chat-waitlist", type: "chat", description: "Live chat for waitlist members" };
+
+      if (waitlistChannels.length === 0) {
+        const created = await storage.createChannel({
+          appSpaceId,
+          name: modeConfig.name,
+          type: modeConfig.type,
+          description: modeConfig.description,
+          isWaitlistersOnly: true,
+          isLocked: false,
+          isReadOnly: false,
+        });
+        return res.json({ mode: targetMode, channels: [...channelsList, created] });
+      }
+
+      const preferredExisting = waitlistChannels.find((channel) =>
+        WAITLIST_MODE_VALUES.includes(channel.name as WaitlistMode),
+      );
+      const primaryWaitlistChannel = preferredExisting ?? waitlistChannels[0];
+
+      const updatedPrimary = await storage.updateChannel(primaryWaitlistChannel.id, {
+        name: modeConfig.name,
+        type: modeConfig.type,
+        description: modeConfig.description,
+        isWaitlistersOnly: true,
+      });
+
+      const refreshedChannels = await storage.getChannels(appSpaceId);
+
+      return res.json({
+        mode: targetMode,
+        primaryChannel: updatedPrimary ?? primaryWaitlistChannel,
+        channels: refreshedChannels,
+      });
+    } catch (error) {
+      throw error;
+    }
+  });
+
   // Get channels for an appspace (supports spectator mode for unauthenticated users)
   app.get("/api/appspaces/:id/channels", async (req, res) => {
     try {
@@ -4285,7 +4386,7 @@ export async function registerRoutes(
 
       // If no channels exist, create default ones
       if (channelsList.length === 0) {
-        channelsList = await storage.createDefaultChannels(appSpaceId);
+        channelsList = await storage.createDefaultChannels(appSpaceId, { waitlistMode: "forum-waitlist" });
       }
 
       // Spectator mode: show all channels (spectators can see locked channels with lock icons)
@@ -4311,8 +4412,8 @@ export async function registerRoutes(
       const accessibleChannels = channelsList.filter(channel => {
         if (isFounder) return true; // Founder sees all
         // Show all public channels to everyone (non-waitlisters-only)
-        // Waitlisters-only channels only for actual waitlist members
-        if (channel.isWaitlistersOnly && !member) return false;
+        // Waitlisters-only channels only for pending members
+        if (channel.isWaitlistersOnly && member?.status !== "pending") return false;
         return true;
       });
 
@@ -4774,7 +4875,33 @@ export async function registerRoutes(
       const appSpaceId = parseInt(req.params.id as string);
       const userId = req.session.userId!;
 
-      const counts = await storage.getUnreadCountsForUser(userId, appSpaceId);
+      const appSpace = await storage.getAppSpace(appSpaceId);
+      if (!appSpace) {
+        return res.status(404).json({ message: "AppSpace not found" });
+      }
+
+      const member = await storage.getWaitlistMember(appSpaceId, userId);
+      const user = await storage.getUser(userId);
+      const isFounder = appSpace.founderId === userId || user?.hasFounderAccess;
+      if (!member && !isFounder) {
+        return res.status(403).json({ message: "Not authorized for this community" });
+      }
+
+      const channelsList = await storage.getChannels(appSpaceId);
+      const visibleChannelIds = new Set(
+        channelsList
+          .filter((channel) => {
+            if (isFounder) return true;
+            if (channel.isWaitlistersOnly) return member?.status === "pending";
+            return true;
+          })
+          .map((channel) => channel.id),
+      );
+
+      const allCounts = await storage.getUnreadCountsForUser(userId, appSpaceId);
+      const counts = Object.fromEntries(
+        Object.entries(allCounts).filter(([channelId]) => visibleChannelIds.has(Number(channelId))),
+      );
       return res.json({ counts });
     } catch (error) {
       throw error;

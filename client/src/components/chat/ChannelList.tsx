@@ -16,9 +16,10 @@ interface ChannelListProps {
   channels: Channel[];
   activeChannelId: number | null;
   onSelectChannel: (channel: Channel) => void;
+  unreadCounts?: Record<number, number>;
 }
 
-export function ChannelList({ channels, activeChannelId, onSelectChannel }: ChannelListProps) {
+export function ChannelList({ channels, activeChannelId, onSelectChannel, unreadCounts = {} }: ChannelListProps) {
   const getChannelIcon = (channel: Channel) => {
     if (channel.isReadOnly) return <Megaphone className="w-4 h-4 text-white/40" />;
     if (channel.isLocked) return <Lock className="w-4 h-4 text-white/40" />;
@@ -63,6 +64,11 @@ export function ChannelList({ channels, activeChannelId, onSelectChannel }: Chan
               <span className="flex-1 truncate text-sm font-medium">
                 {formatChannelName(channel.name)}
               </span>
+              {(unreadCounts[channel.id] || 0) > 0 && (
+                <span className="text-xs font-semibold text-rose-300/90">
+                  ({(unreadCounts[channel.id] || 0) > 99 ? "99+" : unreadCounts[channel.id]})
+                </span>
+              )}
             </button>
           ))}
         </>
@@ -88,6 +94,11 @@ export function ChannelList({ channels, activeChannelId, onSelectChannel }: Chan
               <span className="flex-1 truncate text-sm font-medium">
                 {formatChannelName(channel.name)}
               </span>
+              {(unreadCounts[channel.id] || 0) > 0 && (
+                <span className="text-xs font-semibold text-rose-300/90">
+                  ({(unreadCounts[channel.id] || 0) > 99 ? "99+" : unreadCounts[channel.id]})
+                </span>
+              )}
             </button>
           ))}
         </>

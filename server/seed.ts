@@ -154,6 +154,12 @@ async function seedFirstUserAppSpace() {
   
   // Create default channels
   const defaultChannels = [
+    {
+      name: "forum-waitlist",
+      description: "Forum posts for waitlist members",
+      type: "forum" as const,
+      isWaitlistersOnly: true,
+    },
     { name: "general", description: "General discussion for the community", type: "chat" as const },
     { name: "introductions", description: "Introduce yourself to the community", type: "chat" as const },
     { name: "feedback", description: "Share your feedback and suggestions", type: "chat" as const },
@@ -166,6 +172,7 @@ async function seedFirstUserAppSpace() {
       name: channel.name,
       description: channel.description,
       type: channel.type,
+      isWaitlistersOnly: channel.isWaitlistersOnly || false,
     });
   }
   console.log(`Seeded ${defaultChannels.length} default channels for FirstUser`);

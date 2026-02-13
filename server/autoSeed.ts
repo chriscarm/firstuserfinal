@@ -90,7 +90,13 @@ export async function autoSeedIfNeeded() {
     console.log(`[AutoSeed] Seeded ${defaultBadges.length} default badges.`);
     
     const defaultChannels = [
-      { name: "waitlist-chat", description: "Chat for waitlist members", type: "chat" as const, isLocked: false },
+      {
+        name: "forum-waitlist",
+        description: "Forum posts for waitlist members",
+        type: "forum" as const,
+        isLocked: false,
+        isWaitlistersOnly: true,
+      },
       { name: "general", description: "General discussion for the community", type: "chat" as const, isLocked: true },
       { name: "introductions", description: "Introduce yourself to the community", type: "chat" as const, isLocked: true },
       { name: "feedback", description: "Share your feedback and suggestions", type: "chat" as const, isLocked: true },
@@ -103,6 +109,7 @@ export async function autoSeedIfNeeded() {
         description: channel.description,
         type: channel.type,
         isLocked: channel.isLocked,
+        isWaitlistersOnly: channel.isWaitlistersOnly || false,
       }).onConflictDoNothing();
     }
     console.log(`[AutoSeed] Seeded ${defaultChannels.length} default channels.`);

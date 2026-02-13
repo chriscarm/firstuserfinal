@@ -151,6 +151,8 @@ export function ChatRoom({ channel, appSpaceId }: ChatRoomProps) {
     );
   }
 
+  const isForumChannel = channel.type === "forum" || channel.name.toLowerCase().includes("forum");
+
   return (
     <div className="flex-1 flex flex-col bg-black/20">
       {/* Channel Header */}
@@ -225,6 +227,11 @@ export function ChatRoom({ channel, appSpaceId }: ChatRoomProps) {
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto"
       >
+        {isForumChannel && (
+          <div className="mx-4 mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100/80">
+            Forum mode: post-style updates where everyone can comment.
+          </div>
+        )}
         {/* Load More Button */}
         {hasMoreMessages && (
           <div className="p-4 text-center">
@@ -308,7 +315,7 @@ export function ChatRoom({ channel, appSpaceId }: ChatRoomProps) {
                 value={inputValue}
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
-                placeholder={`Message #${channel.name.replace(/-/g, " ")}`}
+                placeholder={isForumChannel ? `Post in #${channel.name.replace(/-/g, " ")}` : `Message #${channel.name.replace(/-/g, " ")}`}
                 rows={1}
                 disabled={!connected}
                 className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-white placeholder:text-white/30 focus:outline-none focus:border-violet-500/50 resize-none max-h-32 disabled:opacity-50"

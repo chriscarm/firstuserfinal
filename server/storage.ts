@@ -118,6 +118,8 @@ import {
 } from "@shared/schema";
 import { eq, sql, desc, and, asc, count, gt, lt, inArray, gte, or, isNull } from "drizzle-orm";
 
+export type WaitlistMode = "forum-waitlist" | "chat-waitlist";
+
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -1653,11 +1655,45 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
-  async createDefaultChannels(appSpaceId: number): Promise<Channel[]> {
+  async updateChannel(channelId: number, updates: Partial<{
+    name: string;
+    description: string | null;
+    type: string;
+    isLocked: boolean;
+    isWaitlistersOnly: boolean;
+    isReadOnly: boolean;
+  }>): Promise<Channel | undefined> {
+    const result = await db.update(channels)
+      .set(updates)
+      .where(eq(channels.id, channelId))
+      .returning();
+    return result[0];
+  }
+
+  async createDefaultChannels(
+    appSpaceId: number,
+    options?: { waitlistMode?: WaitlistMode },
+  ): Promise<Channel[]> {
+    const waitlistMode = options?.waitlistMode ?? "forum-waitlist";
+    const waitlistChannel = waitlistMode === "forum-waitlist"
+      ? {
+          appSpaceId,
+          name: "forum-waitlist",
+          description: "Forum posts for waitlist members",
+          type: "forum",
+          isWaitlistersOnly: true,
+        }
+      : {
+          appSpaceId,
+          name: "chat-waitlist",
+          description: "Live chat for waitlist members",
+          type: "chat",
+          isWaitlistersOnly: true,
+        };
+
     const defaultChannels: InsertChannel[] = [
       // Waitlist-only (pending users can access)
-      { appSpaceId, name: "let-me-in-already", description: "Chat while you wait", type: "chat", isWaitlistersOnly: true },
-      { appSpaceId, name: "what-i-gotta-do", description: "Tips for getting accepted", type: "chat", isWaitlistersOnly: true },
+      waitlistChannel,
       // Members-only (approved users)
       { appSpaceId, name: "general", description: "General discussion", type: "chat", isLocked: true },
       { appSpaceId, name: "announcements", description: "Official updates", type: "chat", isLocked: true, isReadOnly: true },

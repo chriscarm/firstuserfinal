@@ -23,7 +23,7 @@ interface CommunityChatProps {
 
 export function CommunityChat({ appSpaceId }: CommunityChatProps) {
   const { user } = useAuth();
-  const { connected } = useChat();
+  const { connected, unreadCounts, loadUnreadCounts, markChannelAsRead } = useChat();
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
 
   // Fetch channels for this appspace
@@ -41,6 +41,12 @@ export function CommunityChat({ appSpaceId }: CommunityChatProps) {
   });
 
   const channels = channelsData?.channels || [];
+
+  useEffect(() => {
+    if (user && appSpaceId) {
+      void loadUnreadCounts(appSpaceId);
+    }
+  }, [user, appSpaceId, loadUnreadCounts]);
 
   // Auto-select first channel when loaded
   useEffect(() => {
@@ -102,10 +108,15 @@ export function CommunityChat({ appSpaceId }: CommunityChatProps) {
                   <div className="text-xs font-semibold text-white/30 uppercase tracking-wider px-4 py-2">
                     Waitlisters Only
                   </div>
-                  {waitlistersChannels.map((channel) => (
+                  {waitlistersChannels.map((channel) => {
+                    const channelUnread = unreadCounts[channel.id] || 0;
+                    return (
                     <button
                       key={channel.id}
-                      onClick={() => setSelectedChannel(channel)}
+                      onClick={() => {
+                        setSelectedChannel(channel);
+                        void markChannelAsRead(channel.id);
+                      }}
                       className={`w-full flex items-center gap-2 px-4 py-2 text-left transition-colors ${
                         selectedChannel?.id === channel.id
                           ? "bg-violet-500/20 text-white border-l-2 border-violet-500"
@@ -114,8 +125,11 @@ export function CommunityChat({ appSpaceId }: CommunityChatProps) {
                     >
                       {getChannelIcon(channel)}
                       <span className="flex-1 truncate text-sm">{formatChannelName(channel.name)}</span>
+                      {channelUnread > 0 && (
+                        <span className="text-xs font-semibold text-rose-300/90">({channelUnread > 99 ? "99+" : channelUnread})</span>
+                      )}
                     </button>
-                  ))}
+                  )})}
                 </>
               )}
 
@@ -125,10 +139,15 @@ export function CommunityChat({ appSpaceId }: CommunityChatProps) {
                   <div className="text-xs font-semibold text-white/30 uppercase tracking-wider px-4 py-2 mt-2">
                     Channels
                   </div>
-                  {regularChannels.map((channel) => (
+                  {regularChannels.map((channel) => {
+                    const channelUnread = unreadCounts[channel.id] || 0;
+                    return (
                     <button
                       key={channel.id}
-                      onClick={() => setSelectedChannel(channel)}
+                      onClick={() => {
+                        setSelectedChannel(channel);
+                        void markChannelAsRead(channel.id);
+                      }}
                       className={`w-full flex items-center gap-2 px-4 py-2 text-left transition-colors ${
                         selectedChannel?.id === channel.id
                           ? "bg-violet-500/20 text-white border-l-2 border-violet-500"
@@ -137,13 +156,16 @@ export function CommunityChat({ appSpaceId }: CommunityChatProps) {
                     >
                       {getChannelIcon(channel)}
                       <span className="flex-1 truncate text-sm">{formatChannelName(channel.name)}</span>
+                      {channelUnread > 0 && (
+                        <span className="text-xs font-semibold text-rose-300/90">({channelUnread > 99 ? "99+" : channelUnread})</span>
+                      )}
                       {channel.isLocked && (
                         <span className="text-[10px] text-violet-400/70 bg-violet-400/10 px-1.5 py-0.5 rounded">
                           approved
                         </span>
                       )}
                     </button>
-                  ))}
+                  )})}
                 </>
               )}
             </>
