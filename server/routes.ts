@@ -10,25 +10,11 @@ import fs from "fs";
 import crypto from "crypto";
 import sharp from "sharp";
 import { sendVerificationEmail } from "./email";
+import { sendSMSWithResult } from "./sms";
 import { emitNotificationToUser } from "./websocket";
 import { getHomepageOwnerPhone, getHomepageSlug, isHomepageOwnerUser, isHomepageSlug } from "./homepageOwnership";
 import { sendOpsAlert } from "./opsAlerts";
 import { buildIntegrationSetupPack, isIntegrationStack, SUPPORTED_INTEGRATION_STACKS } from "./integrationSetupPack";
-// TextBelt SMS configuration
-const TEXTBELT_API_KEY = process.env.TEXTBELT_API_KEY || "textbelt";
-
-async function sendTextBeltSMS(phone: string, message: string): Promise<{ success: boolean; textId?: string; error?: string }> {
-  const response = await fetch("https://textbelt.com/text", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      phone,
-      message,
-      key: TEXTBELT_API_KEY,
-    }),
-  });
-  return response.json();
-}
 
 function generateOTP(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -1122,17 +1108,17 @@ export async function registerRoutes(
         expiresAt: new Date(Date.now() + 5 * 60 * 1000),
       });
 
-      // Send OTP via TextBelt
+      // Send OTP via Twilio
       console.log("[SMS OTP] Sending to:", formattedPhone);
-      const result = await sendTextBeltSMS(formattedPhone, `Your FirstUser verification code is: ${otp}`);
-      console.log("[SMS OTP] TextBelt full response:", JSON.stringify(result));
+      const result = await sendSMSWithResult(formattedPhone, `Your FirstUser verification code is: ${otp}`);
+      console.log("[SMS OTP] Twilio response:", JSON.stringify(result));
       
       if (!result.success) {
-        console.error("TextBelt error:", result.error);
+        console.error("Twilio error:", result.error);
         return res.status(500).json({ message: result.error || "Failed to send SMS" });
       }
 
-      console.log("[SMS OTP] TextBelt success - textId:", result.textId);
+      console.log("[SMS OTP] Twilio success - sid:", result.sid);
 
       // Explicitly save session before responding
       await new Promise<void>((resolve, reject) => {
@@ -1273,26 +1259,26 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Phone number is required" });
       }
 
-      const response = await fetch("https://textbelt.com/otp/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone: phone,
-          userid: userId,
-          key: process.env.TEXTBELT_API_KEY,
-          message: "Your FirstUser verification code is $OTP",
-          lifetime: 300,
-          length: 6
-        })
+      const cleanPhone = phone.replace(/\D/g, "");
+      const formattedPhone = cleanPhone.startsWith("1") ? `+${cleanPhone}` : `+1${cleanPhone}`;
+      const otp = generateOTP();
+
+      await storage.createAuthVerification({
+        userId,
+        method: "phone",
+        target: cleanPhone,
+        codeHash: hashOTP(otp),
+        ipAddress: getClientIp(req),
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
       });
 
-      const result = await response.json();
-      if (result.success) {
-        await storage.updateUserPhone(userId, phone);
-        return res.json({ success: true });
-      } else {
-        return res.status(400).json({ message: result.error || "Failed to send code" });
+      const result = await sendSMSWithResult(formattedPhone, `Your FirstUser verification code is: ${otp}`);
+      if (!result.success) {
+        return res.status(500).json({ message: result.error || "Failed to send code" });
       }
+
+      await storage.updateUserPhone(userId, cleanPhone);
+      return res.json({ success: true });
     } catch (error) {
       console.error("Phone send error:", error);
       return res.status(500).json({ message: "Failed to send verification code" });
@@ -1309,11 +1295,24 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Phone and code are required" });
       }
 
-      const response = await fetch(`https://textbelt.com/otp/verify?otp=${code}&userid=${userId}&key=${process.env.TEXTBELT_API_KEY}`);
-      const result = await response.json();
+      const cleanPhone = phone.replace(/\D/g, "");
+      const verification = await storage.getActiveAuthVerification(userId, "phone");
+      if (!verification) {
+        return res.status(400).json({ message: "Invalid or expired code" });
+      }
 
-      if (result.success && result.isValidOtp) {
-        const cleanPhone = phone.replace(/\D/g, "");
+      if (verification.target !== cleanPhone) {
+        return res.status(400).json({ message: "Invalid or expired code" });
+      }
+
+      if (verification.expiresAt.getTime() <= Date.now()) {
+        await storage.consumeAuthVerification(verification.id);
+        return res.status(400).json({ message: "Invalid or expired code" });
+      }
+
+      const isValidOtp = verification.codeHash === hashOTP(String(code).trim());
+      if (isValidOtp) {
+        await storage.consumeAuthVerification(verification.id);
         // Check against env variable for founder phones (comma-separated list)
         const founderPhones = (process.env.FOUNDER_PHONES || "").split(",").map(p => p.trim()).filter(Boolean);
         const isFounderPhone = founderPhones.some(p => cleanPhone === p || cleanPhone === p.replace(/\D/g, ""));

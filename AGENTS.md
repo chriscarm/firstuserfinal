@@ -38,7 +38,9 @@
 ## Environment Variables (names only — see .env.example)
 - DATABASE_URL
 - SESSION_SECRET
-- TEXTBELT_API_KEY
+- TWILIO_ACCOUNT_SID
+- TWILIO_AUTH_TOKEN
+- TWILIO_PHONE_NUMBER
 - SENDGRID_API_KEY
 - EMAIL_FROM
 - FOUNDER_PHONES
@@ -56,7 +58,7 @@ server/               # Express backend
   storage.ts          # Database access layer
   db.ts               # Drizzle connection
   email.ts            # SendGrid integration
-  sms.ts              # Textbelt SMS integration
+  sms.ts              # Twilio SMS integration
 shared/               # Shared types and schemas
   schema.ts           # Drizzle table definitions
 ```
