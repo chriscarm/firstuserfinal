@@ -307,7 +307,34 @@ export default function FounderToolsPage() {
   );
 }
 
-type IntegrationStack = "web" | "react-native";
+type IntegrationStack =
+  | "web"
+  | "react-native"
+  | "ios-swift"
+  | "android-kotlin"
+  | "flutter"
+  | "expo"
+  | "capacitor"
+  | "unity"
+  | "nextjs"
+  | "vue"
+  | "nuxt"
+  | "angular";
+
+const INTEGRATION_STACK_OPTIONS: Array<{ id: IntegrationStack; label: string }> = [
+  { id: "web", label: "Web" },
+  { id: "react-native", label: "React Native" },
+  { id: "ios-swift", label: "iOS Swift" },
+  { id: "android-kotlin", label: "Android Kotlin" },
+  { id: "flutter", label: "Flutter" },
+  { id: "expo", label: "Expo" },
+  { id: "capacitor", label: "Capacitor" },
+  { id: "unity", label: "Unity" },
+  { id: "nextjs", label: "Next.js" },
+  { id: "vue", label: "Vue" },
+  { id: "nuxt", label: "Nuxt" },
+  { id: "angular", label: "Angular" },
+];
 
 interface IntegrationSetupPayload {
   id: number;
@@ -697,19 +724,19 @@ function IntegrationsManager({ appSpaceId, appSpaceName }: { appSpaceId: number;
 
       <div className="glass-panel p-6 space-y-4">
         <h4 className="text-white font-semibold">Step 3: Copy To AI</h4>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setStack("web")}
-            className={`px-3 py-2 rounded-lg text-sm ${stack === "web" ? "bg-violet-500 text-white" : "bg-white/5 text-white/70"}`}
-          >
-            Web
-          </button>
-          <button
-            onClick={() => setStack("react-native")}
-            className={`px-3 py-2 rounded-lg text-sm ${stack === "react-native" ? "bg-violet-500 text-white" : "bg-white/5 text-white/70"}`}
-          >
-            React Native
-          </button>
+        <p className="text-xs text-white/60">
+          Choose your target platform. Each option gives platform-specific implementation instructions.
+        </p>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {INTEGRATION_STACK_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              onClick={() => setStack(option.id)}
+              className={`px-3 py-2 rounded-lg text-sm whitespace-nowrap ${stack === option.id ? "bg-violet-500 text-white" : "bg-white/5 text-white/70"}`}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
 
         {setupPackQuery.isLoading ? (

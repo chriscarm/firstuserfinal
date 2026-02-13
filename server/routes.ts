@@ -13,6 +13,7 @@ import { sendVerificationEmail } from "./email";
 import { emitNotificationToUser } from "./websocket";
 import { getHomepageOwnerPhone, getHomepageSlug, isHomepageOwnerUser, isHomepageSlug } from "./homepageOwnership";
 import { sendOpsAlert } from "./opsAlerts";
+import { buildIntegrationSetupPack, isIntegrationStack, SUPPORTED_INTEGRATION_STACKS } from "./integrationSetupPack";
 // TextBelt SMS configuration
 const TEXTBELT_API_KEY = process.env.TEXTBELT_API_KEY || "textbelt";
 
@@ -661,95 +662,6 @@ async function retrySingleIntegrationWebhookDelivery(delivery: {
       reason: "Webhook retry failed due to network or runtime error.",
     });
   }
-}
-
-function buildIntegrationSetupPack(options: {
-  appName: string;
-  appSpaceSlug: string;
-  publicAppId: string;
-  stack: "web" | "react-native";
-  baseUrl: string;
-  webRedirectUrl: string | null;
-  mobileDeepLinkUrl: string | null;
-  redirectEnabled: boolean;
-  embeddedEnabled: boolean;
-  webhookUrl: string | null;
-  webhookSecretLastFour?: string | null;
-  hasApiKey: boolean;
-  keyId?: string;
-}): {
-  masterPrompt: string;
-  fallbackManualSteps: string[];
-  verificationChecklist: string[];
-} {
-  const integrationApiBase = `${options.baseUrl}/api/integration/v1`;
-  const hostedJoinUrl = `${options.baseUrl}/i/${options.publicAppId}/join`;
-  const platformNotes = options.stack === "web"
-    ? "Use browser redirects and standard fetch calls from your backend."
-    : "Use deep links + your mobile backend for all FirstUser API calls (never from client app).";
-  const keyInstruction = options.hasApiKey && options.keyId
-    ? `Use API key id ${options.keyId} and the secret shown in Founder Tools when authenticating with FirstUser.`
-    : "First generate an API key in FirstUser Founder Tools > Integrate, then use it for all server-to-server calls.";
-
-  const masterPrompt = `You are implementing FirstUser integration for ${options.appName}.
-
-Goal:
-- Add FirstUser waitlist + approval access + live usage heartbeat + founder chat support.
-- Target stack: ${options.stack}.
-- ${platformNotes}
-
-FirstUser config:
-- Base URL: ${options.baseUrl}
-- Public App ID: ${options.publicAppId}
-- Hosted Join URL: ${hostedJoinUrl}
-- Redirect enabled: ${options.redirectEnabled}
-- Embedded enabled: ${options.embeddedEnabled}
-- Partner web redirect URL: ${options.webRedirectUrl || "(not set yet)"}
-- Partner mobile deep link URL: ${options.mobileDeepLinkUrl || "(not set yet)"}
-- Webhook URL: ${options.webhookUrl || "(not set yet)"}
-- Webhook secret ending: ${options.webhookSecretLastFour || "(rotate webhook secret in Founder Tools)"}
-- ${keyInstruction}
-
-Implement exactly:
-1) Add a "Join Waitlist" button that points to ${hostedJoinUrl} (redirect mode).
-2) If using embedded mode, add backend endpoint that calls ${integrationApiBase}/waitlist/start and then redirects user to the returned continuationUrl.
-3) On approval deep-link/access code, call backend to exchange code with ${integrationApiBase}/access/exchange.
-4) Map external user id to returned FirstUser user id.
-5) Start heartbeat every 15s from backend via ${integrationApiBase}/usage/heartbeat with status live/idle/offline and clientPlatform.
-6) Send plan tier updates to ${integrationApiBase}/users/:externalUserId/plan whenever billing tier changes.
-7) Request hosted chat widget token from ${integrationApiBase}/chat/widget-token and mount iframe/webview to the returned widgetUrl.
-8) Do not expose API secrets in frontend/mobile code. Backend only.
-9) Verify webhook signatures using header x-firstuser-signature-sha256 and your FirstUser webhook secret.
-
-Output required:
-- Provide files changed.
-- Provide the exact environment variables needed.
-- Provide a short test plan proving: join flow, access exchange, heartbeat, and chat widget load.
-`;
-
-  const fallbackManualSteps = [
-    "Create or rotate an integration API key in Founder Tools > Integrate.",
-    `Add a Join Waitlist button to your app linking to ${hostedJoinUrl}.`,
-    "When users are approved, consume access code on your backend via /api/integration/v1/access/exchange.",
-    "Store external_user_id <-> firstuser_user_id mapping in your database.",
-    "Send usage heartbeat every 15 seconds while app is active.",
-    "Mount hosted chat widget URL returned from /api/integration/v1/chat/widget-token.",
-  ];
-
-  const verificationChecklist = [
-    "Join Waitlist button opens FirstUser join flow.",
-    "Approved user can one-click into app and exchange access code successfully.",
-    "Heartbeat appears in Founder Tools Live Now within 20 seconds.",
-    "User disappears from live list within 45 seconds after app close.",
-    "Founder can send chat message and user receives it in hosted widget.",
-    "No phone/email appears in founder live user or chat payloads.",
-  ];
-
-  return {
-    masterPrompt,
-    fallbackManualSteps,
-    verificationChecklist,
-  };
 }
 
 async function handleIntegrationMembershipEvent(options: {
@@ -3361,7 +3273,13 @@ export async function registerRoutes(
       });
       if (!canManage) return;
 
-      const stack = req.query.stack === "react-native" ? "react-native" : "web";
+      const requestedStack = typeof req.query.stack === "string" ? req.query.stack.trim() : "";
+      const stack = requestedStack ? requestedStack : "web";
+      if (!isIntegrationStack(stack)) {
+        return res.status(400).json({
+          message: `Invalid stack. Supported stacks: ${SUPPORTED_INTEGRATION_STACKS.join(", ")}`,
+        });
+      }
       const integration = await storage.getIntegrationAppByAppSpaceId(appSpaceId)
         || await storage.createOrUpdateIntegrationApp({ appSpaceId });
       const activeKey = await storage.getActiveIntegrationApiKeyForApp(integration.id);
