@@ -1,10 +1,21 @@
-# FirstUser React Native SDK Starter
+# FirstUser React Native SDK
 
-Use this starter in React Native mobile apps.
+Use this in React Native apps.
 
-Required surface:
+Methods:
 - init
 - startPresence
+- stopPresence
 - mountHostedChatWidget
 - startEmbeddedWaitlist
+- exchangeAccessCode
+- sendHeartbeat
 - setPlanTier
+- getHostedChatWidgetToken
+
+Partner backend routes this SDK calls:
+- POST /api/firstuser/waitlist/start
+- POST /api/firstuser/access/exchange
+- POST /api/firstuser/usage/heartbeat
+- POST /api/firstuser/users/:externalUserId/plan
+- POST /api/firstuser/chat/widget-token

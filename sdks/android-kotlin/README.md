@@ -1,10 +1,21 @@
-# FirstUser Android Kotlin SDK Starter
+# FirstUser Android Kotlin SDK
 
-Starter structure for Android integrations as a Kotlin library.
+Use this in Android Kotlin apps.
 
-Required surface:
+Methods:
 - init
 - startPresence
+- stopPresence
 - mountHostedChatWidget
 - startEmbeddedWaitlist
+- exchangeAccessCode
+- sendHeartbeat
 - setPlanTier
+- getHostedChatWidgetToken
+
+Partner backend routes this SDK calls:
+- POST /api/firstuser/waitlist/start
+- POST /api/firstuser/access/exchange
+- POST /api/firstuser/usage/heartbeat
+- POST /api/firstuser/users/:externalUserId/plan
+- POST /api/firstuser/chat/widget-token

@@ -1,12 +1,6 @@
 # FirstUser SDK Workspace
 
-This folder contains the integration starter kits that our AI Setup Pack can generate against.
-
-If you are a founder with no coding background, your flow is:
-1. Open Founder Tools -> Integrate.
-2. Copy the "Master Prompt".
-3. Paste it into your AI coding tool.
-4. The AI implements one of these SDK starters in your app stack.
+This workspace contains production-ready v1 SDK kits for every supported integration stack.
 
 Supported stacks:
 1. web
@@ -22,23 +16,30 @@ Supported stacks:
 11. nuxt
 12. angular
 
-Every SDK kit includes:
-- a platform README
-- a starter implementation exposing the required FirstUser methods
+Each SDK exposes the same contract so founders can use one integration mental model across platforms.
+
+Required method contract (shared across all stacks):
+- init
+- startPresence
+- stopPresence
+- mountHostedChatWidget
+- startEmbeddedWaitlist
+- exchangeAccessCode
+- sendHeartbeat
+- setPlanTier
+- getHostedChatWidgetToken
+
+Required partner backend routes called by SDKs:
+- POST /api/firstuser/waitlist/start
+- POST /api/firstuser/access/exchange
+- POST /api/firstuser/usage/heartbeat
+- POST /api/firstuser/users/:externalUserId/plan
+- POST /api/firstuser/chat/widget-token
 
 Contract source of truth:
 - `sdks/contract/firstuser-sdk-contract.json`
 
-Current required methods:
-- `init`
-- `startPresence`
-- `mountHostedChatWidget`
-- `startEmbeddedWaitlist`
-- `setPlanTier`
-
-Partner backend route convention used by starter kits:
-- `POST /api/firstuser/waitlist/start`
-- `POST /api/firstuser/users/:externalUserId/plan`
-
-Validation command:
+Validation commands:
+- `npm run test:integration-stacks`
 - `npm run test:sdk-kits`
+- `npm run test:sdk-runtime`

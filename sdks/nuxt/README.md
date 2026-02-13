@@ -1,14 +1,21 @@
-# FirstUser Nuxt SDK Starter
+# FirstUser Nuxt SDK
 
-Use this starter for Nuxt apps (Nitro server + client composables).
+Use this in Nuxt apps.
 
-Required surface:
+Methods:
 - init
 - startPresence
+- stopPresence
 - mountHostedChatWidget
 - startEmbeddedWaitlist
+- exchangeAccessCode
+- sendHeartbeat
 - setPlanTier
+- getHostedChatWidgetToken
 
-Expected partner backend routes:
+Partner backend routes this SDK calls:
 - POST /api/firstuser/waitlist/start
+- POST /api/firstuser/access/exchange
+- POST /api/firstuser/usage/heartbeat
 - POST /api/firstuser/users/:externalUserId/plan
+- POST /api/firstuser/chat/widget-token

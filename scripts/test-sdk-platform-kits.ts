@@ -57,20 +57,27 @@ for (const platform of platformKits) {
     assert.ok(readmeText.includes(method), `${platform.id}: missing method token '${method}' in README`);
   }
 
-  assert.ok(
-    sourceText.includes("/api/firstuser/waitlist/start"),
-    `${platform.id}: source missing /api/firstuser/waitlist/start route`,
-  );
-  assert.ok(
-    sourceText.includes("/api/firstuser/users") && sourceText.includes("/plan"),
-    `${platform.id}: source missing /api/firstuser/users/:externalUserId/plan route shape`,
-  );
+  for (const apiFlow of contract.requiredApiFlows) {
+    if (apiFlow.includes(":externalUserId")) {
+      const [prefix, suffix] = apiFlow.split(":externalUserId");
+      assert.ok(
+        sourceText.includes(prefix) && sourceText.includes(suffix),
+        `${platform.id}: source missing API flow token '${apiFlow}'`,
+      );
+      continue;
+    }
+
+    assert.ok(sourceText.includes(apiFlow), `${platform.id}: source missing API flow token '${apiFlow}'`);
+  }
 }
 
 const workspaceReadmePath = path.join(repoRoot, "sdks", "README.md");
 const workspaceReadme = fs.readFileSync(workspaceReadmePath, "utf8");
 for (const platform of platformKits) {
   assert.ok(workspaceReadme.includes(platform.id), `sdks/README.md missing platform '${platform.id}'`);
+}
+for (const method of contract.requiredMethods) {
+  assert.ok(workspaceReadme.includes(method), `sdks/README.md missing method '${method}'`);
 }
 
 console.log(`SDK platform conformance passed for ${platformKits.length} starter kits.`);

@@ -1,14 +1,21 @@
-# FirstUser Next.js SDK Starter
+# FirstUser Next.js SDK
 
-Use this starter for Next.js apps that need browser + server integration.
+Use this in Next.js apps.
 
-Required surface:
+Methods:
 - init
 - startPresence
+- stopPresence
 - mountHostedChatWidget
 - startEmbeddedWaitlist
+- exchangeAccessCode
+- sendHeartbeat
 - setPlanTier
+- getHostedChatWidgetToken
 
-Expected partner backend routes:
+Partner backend routes this SDK calls:
 - POST /api/firstuser/waitlist/start
+- POST /api/firstuser/access/exchange
+- POST /api/firstuser/usage/heartbeat
 - POST /api/firstuser/users/:externalUserId/plan
+- POST /api/firstuser/chat/widget-token

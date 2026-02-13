@@ -1,14 +1,21 @@
-# FirstUser Vue SDK Starter
+# FirstUser Vue SDK
 
-Use this starter for Vue 3 apps with plugin/composable patterns.
+Use this in Vue 3 apps.
 
-Required surface:
+Methods:
 - init
 - startPresence
+- stopPresence
 - mountHostedChatWidget
 - startEmbeddedWaitlist
+- exchangeAccessCode
+- sendHeartbeat
 - setPlanTier
+- getHostedChatWidgetToken
 
-Expected partner backend routes:
+Partner backend routes this SDK calls:
 - POST /api/firstuser/waitlist/start
+- POST /api/firstuser/access/exchange
+- POST /api/firstuser/usage/heartbeat
 - POST /api/firstuser/users/:externalUserId/plan
+- POST /api/firstuser/chat/widget-token

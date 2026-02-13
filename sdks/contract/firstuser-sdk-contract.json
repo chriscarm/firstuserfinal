@@ -1,19 +1,23 @@
 {
   "name": "firstuser-sdk-contract",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "requiredMethods": [
     "init",
     "startPresence",
+    "stopPresence",
     "mountHostedChatWidget",
     "startEmbeddedWaitlist",
-    "setPlanTier"
+    "exchangeAccessCode",
+    "sendHeartbeat",
+    "setPlanTier",
+    "getHostedChatWidgetToken"
   ],
   "requiredApiFlows": [
-    "/api/integration/v1/waitlist/start",
-    "/api/integration/v1/access/exchange",
-    "/api/integration/v1/usage/heartbeat",
-    "/api/integration/v1/users/:externalUserId/plan",
-    "/api/integration/v1/chat/widget-token"
+    "/api/firstuser/waitlist/start",
+    "/api/firstuser/access/exchange",
+    "/api/firstuser/usage/heartbeat",
+    "/api/firstuser/users/:externalUserId/plan",
+    "/api/firstuser/chat/widget-token"
   ],
   "requiredRealtimeEvents": [
     "presence.heartbeat",
