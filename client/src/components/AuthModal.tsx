@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
-import { X, Phone, Sparkles } from "lucide-react";
+import { Phone, Sparkles } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 
 interface AuthModalProps {
@@ -40,14 +40,6 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
 
   const renderContent = (mobile: boolean) => (
     <div className={`relative ${mobile ? "px-5 pb-6 pt-4" : "px-7 pb-7 pt-6"}`}>
-      <button
-        onClick={() => onOpenChange(false)}
-        className={`absolute right-4 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-white/[0.03] text-white/70 transition-colors hover:bg-white/[0.08] hover:text-white ${mobile ? "top-3" : "top-4"}`}
-        data-testid="button-close-auth"
-      >
-        <X className="h-4 w-4" />
-      </button>
-
       <div className={`mx-auto max-w-[380px] text-center ${mobile ? "pt-8" : "pt-7"}`}>
         <div className={`mx-auto rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center shadow-[0_8px_24px_rgba(139,92,246,0.28)] ${mobile ? "mb-5 h-16 w-16" : "mb-5 h-[72px] w-[72px]"}`}>
           <Sparkles className={`${mobile ? "h-8 w-8" : "h-9 w-9"} text-white`} />
