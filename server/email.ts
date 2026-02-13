@@ -1,3 +1,4 @@
+// SendGrid integration via Replit connector (connection:conn_sendgrid_01KHBQWCXB07H52WAFQF95QGQR)
 import sgMail from "@sendgrid/mail";
 
 interface SendEmailResult {
@@ -7,11 +8,48 @@ interface SendEmailResult {
   providerStatus?: number;
 }
 
-function initSendGrid() {
-  const apiKey = process.env.SENDGRID_API_KEY;
-  if (!apiKey) return false;
-  sgMail.setApiKey(apiKey);
-  return true;
+async function getSendGridClient() {
+  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
+  const xReplitToken = process.env.REPL_IDENTITY
+    ? 'repl ' + process.env.REPL_IDENTITY
+    : process.env.WEB_REPL_RENEWAL
+    ? 'depl ' + process.env.WEB_REPL_RENEWAL
+    : null;
+
+  if (!hostname || !xReplitToken) {
+    const apiKey = process.env.SENDGRID_API_KEY;
+    if (!apiKey) {
+      throw new Error("SendGrid not configured");
+    }
+    sgMail.setApiKey(apiKey);
+    return {
+      client: sgMail,
+      fromEmail: process.env.EMAIL_FROM || "FirstUser <noreply@firstuser.app>",
+    };
+  }
+
+  const response = await fetch(
+    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=sendgrid',
+    {
+      headers: {
+        'Accept': 'application/json',
+        'X_REPLIT_TOKEN': xReplitToken
+      }
+    }
+  );
+
+  const data = await response.json() as { items?: Array<{ settings?: { api_key?: string; from_email?: string } }> };
+  const connectionSettings = data.items?.[0];
+
+  if (!connectionSettings || !connectionSettings.settings?.api_key || !connectionSettings.settings?.from_email) {
+    throw new Error('SendGrid not connected');
+  }
+
+  sgMail.setApiKey(connectionSettings.settings.api_key);
+  return {
+    client: sgMail,
+    fromEmail: connectionSettings.settings.from_email,
+  };
 }
 
 export async function sendEmail(
@@ -19,18 +57,12 @@ export async function sendEmail(
   subject: string,
   html: string
 ): Promise<SendEmailResult> {
-  const configured = initSendGrid();
-
-  if (!configured) {
-    console.log("[EMAIL] No SENDGRID_API_KEY configured - simulating email send");
-    console.log(`[EMAIL] Would send to ${to}: ${subject}`);
-    return { success: true, id: "dev-mock" };
-  }
-
   try {
-    const [result] = await sgMail.send({
+    const { client, fromEmail } = await getSendGridClient();
+
+    const [result] = await client.send({
       to,
-      from: process.env.EMAIL_FROM || "FirstUser <noreply@firstuser.app>",
+      from: fromEmail,
       subject,
       html,
     });
@@ -52,7 +84,7 @@ export async function sendEmail(
       normalizedMessage.includes("permission") ||
       normalizedMessage.includes("sender identity")
     ) {
-      safeMessage = "Email login is temporarily unavailable. Please verify SENDGRID_API_KEY and EMAIL_FROM sender settings.";
+      safeMessage = "Email login is temporarily unavailable. Please verify SendGrid sender settings.";
     }
 
     console.error("[EMAIL] SendGrid error:", {

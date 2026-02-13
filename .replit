@@ -45,7 +45,7 @@ outputType = "webview"
 [agent]
 mockupState = "FULLSTACK"
 expertMode = true
-integrations = ["twilio:1.0.0"]
+integrations = ["twilio:1.0.0", "sendgrid:1.0.0"]
 
 [userenv]
 
