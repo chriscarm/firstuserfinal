@@ -1,3 +1,6 @@
+// SMS sending via Twilio Replit connector (connection:conn_twilio_01KHBJWJ28W58TPT9ADA5W8FQ7)
+import { sendTwilioSMS } from "./twilio";
+
 interface SendSmsResult {
   success: boolean;
   error?: string;
@@ -13,70 +16,28 @@ function toE164(phone: string): string {
   return `+${digits}`;
 }
 
-async function sendSmsViaTwilio(phone: string, message: string): Promise<SendSmsResult> {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const fromPhone = process.env.TWILIO_PHONE_NUMBER;
-
-  if (!accountSid || !authToken || !fromPhone) {
-    return {
-      success: false,
-      error: "Twilio is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER.",
-    };
-  }
-
-  try {
-    const toPhone = toE164(phone);
-    const endpoint = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
-    const body = new URLSearchParams({
-      To: toPhone,
-      From: fromPhone,
-      Body: message,
-    });
-
-    const authHeader = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${authHeader}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: body.toString(),
-    });
-
-    const data = await response.json().catch(() => ({})) as {
-      sid?: string;
-      message?: string;
-      code?: number;
-    };
-
-    if (!response.ok) {
-      return {
-        success: false,
-        providerStatus: response.status,
-        error: data.message || `Twilio request failed (${response.status})`,
-      };
-    }
-
-    return { success: true, sid: data.sid };
-  } catch (error: any) {
-    return {
-      success: false,
-      error: error?.message || "Twilio request failed",
-    };
-  }
-}
-
 export async function sendSMS(phone: string, message: string): Promise<boolean> {
-  const result = await sendSmsViaTwilio(phone, message);
-  if (!result.success) {
-    console.error("[SMS] Twilio send failed:", result.error, {
-      providerStatus: result.providerStatus,
-    });
-  }
+  const result = await sendSMSWithResult(phone, message);
   return result.success;
 }
 
 export async function sendSMSWithResult(phone: string, message: string): Promise<SendSmsResult> {
-  return sendSmsViaTwilio(phone, message);
+  try {
+    const toPhone = toE164(phone);
+    const result = await sendTwilioSMS(toPhone, message);
+    if (!result.success) {
+      console.error("[SMS] Twilio send failed:", result.error);
+      return {
+        success: false,
+        error: result.error || "Twilio request failed",
+      };
+    }
+    return { success: true, sid: result.sid };
+  } catch (error: any) {
+    console.error("[SMS] Unexpected error:", error?.message);
+    return {
+      success: false,
+      error: error?.message || "SMS send failed",
+    };
+  }
 }

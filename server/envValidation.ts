@@ -58,8 +58,8 @@ export function validateRuntimeEnvironment(env: NodeJS.ProcessEnv): EnvValidatio
   if (!env.EMAIL_FROM) {
     warnings.push("EMAIL_FROM not set. Email sender will use fallback.");
   }
-  if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_PHONE_NUMBER) {
-    warnings.push("Twilio env vars (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER) are not fully set. SMS delivery will fail.");
+  if (!env.REPLIT_CONNECTORS_HOSTNAME) {
+    warnings.push("Twilio connector not available (REPLIT_CONNECTORS_HOSTNAME not set). SMS delivery may fail.");
   }
   if (!env.SENDGRID_API_KEY) {
     warnings.push("SENDGRID_API_KEY not set. Email delivery will fail.");
