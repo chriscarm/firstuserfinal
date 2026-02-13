@@ -12,6 +12,8 @@ import { useUncelebratedBadges } from "@/hooks/useUncelebratedBadges";
 import { AuthModal } from "@/components/AuthModal";
 import { PhoneAuthModal } from "@/components/PhoneAuthModal";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { ThemeModeSwitcher } from "@/components/ThemeModeSwitcher";
+import { ThemeProvider, useThemeMode } from "@/lib/theme";
 import NotFound from "@/pages/not-found";
 import FirstUserLandingPage from "@/pages/FirstUserLandingPage";
 import SpaceLandingPage from "@/pages/SpaceLandingPage";
@@ -81,12 +83,14 @@ function Router() {
 
 function AppContent() {
   const { isAuthModalOpen, closeAuthModal, phoneAuthState, closePhoneAuthModal } = useAuth();
+  const { mode } = useThemeMode();
   useUncelebratedBadges();
 
   return (
     <>
-      <SonnerToaster position="top-center" theme="dark" />
+      <SonnerToaster position="top-center" theme={mode === "light" ? "light" : "dark"} />
       <Router />
+      <ThemeModeSwitcher />
       <AuthModal
         open={isAuthModalOpen}
         onOpenChange={(open) => {
@@ -108,19 +112,21 @@ function AppContent() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <ChatProvider>
-          <NotificationProvider>
-            <LayoutProvider>
-              <BadgeCelebrationProvider>
-                <TooltipProvider>
-                  <AppContent />
-                </TooltipProvider>
-              </BadgeCelebrationProvider>
-            </LayoutProvider>
-          </NotificationProvider>
-        </ChatProvider>
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <ChatProvider>
+            <NotificationProvider>
+              <LayoutProvider>
+                <BadgeCelebrationProvider>
+                  <TooltipProvider>
+                    <AppContent />
+                  </TooltipProvider>
+                </BadgeCelebrationProvider>
+              </LayoutProvider>
+            </NotificationProvider>
+          </ChatProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }
