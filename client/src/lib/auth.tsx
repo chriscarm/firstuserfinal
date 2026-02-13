@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext, ReactNode } from "react";
+import { useState, useEffect, useCallback, createContext, useContext, ReactNode } from "react";
 
 export interface UserData {
   id: string;
@@ -68,11 +68,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkSession();
   }, []);
 
-  const setUser = (userData: UserData | null) => {
+  const setUser = useCallback((userData: UserData | null) => {
     setUserState(userData);
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       await fetch("/api/auth/logout", {
         method: "POST",
@@ -83,37 +83,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error("Logout error:", error);
     }
-  };
+  }, []);
 
-  const openAuthModal = (redirectUrl?: string) => {
+  const openAuthModal = useCallback((redirectUrl?: string) => {
     if (redirectUrl && redirectUrl.trim()) {
       setPendingRedirectUrl(redirectUrl);
     } else {
       setPendingRedirectUrl(null);
     }
     setIsAuthModalOpen(true);
-  };
+  }, []);
 
-  const closeAuthModal = (preserveRedirect: boolean = false) => {
+  const closeAuthModal = useCallback((preserveRedirect: boolean = false) => {
     setIsAuthModalOpen(false);
     if (!preserveRedirect) {
       setPendingRedirectUrl(null);
     }
-  };
+  }, []);
 
-  const clearPendingRedirectUrl = () => {
+  const clearPendingRedirectUrl = useCallback(() => {
     setPendingRedirectUrl(null);
-  };
+  }, []);
 
-  const openPhoneAuthModal = (appSpaceSlug?: string | null, appSpaceId?: number | null) => {
+  const openPhoneAuthModal = useCallback((appSpaceSlug?: string | null, appSpaceId?: number | null) => {
     setPhoneAuthState({
       isOpen: true,
       appSpaceSlug: appSpaceSlug ?? null,
       appSpaceId: appSpaceId ?? null,
     });
-  };
+  }, []);
 
-  const closePhoneAuthModal = (preserveRedirect: boolean = false) => {
+  const closePhoneAuthModal = useCallback((preserveRedirect: boolean = false) => {
     setPhoneAuthState({
       isOpen: false,
       appSpaceSlug: null,
@@ -122,7 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!preserveRedirect) {
       setPendingRedirectUrl(null);
     }
-  };
+  }, []);
 
   return (
     <AuthContext.Provider
